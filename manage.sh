@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  bot — Bot Management Script
-#  GitHub: https://github.com/mazyarzohdi/bot
+#  BananaBot — Bot Management Script
+#  GitHub: https://github.com/mazyarzohdi/BananaBot
 # =============================================================================
 
 set -euo pipefail
@@ -19,11 +19,11 @@ done
 unset _candidate_locale
 
 # ------------------------------------------------------------
-INSTALL_DIR="/opt/bot"
+INSTALL_DIR="/opt/BananaBot"
 WEBAPP_DIR="$INSTALL_DIR/webapp"
-SERVICE_NAME="bot"
-WEBAPP_SERVICE="bot-web"
-WEBHOOK_SERVICE="bot-webhook"
+SERVICE_NAME="bananabot"
+WEBAPP_SERVICE="bananabot-web"
+WEBHOOK_SERVICE="bananabot-webhook"
 ENV_FILE="$INSTALL_DIR/.env"
 WEBAPP_ENV="$WEBAPP_DIR/.env"
 DB_PATH="$INSTALL_DIR/data/bot.db"
@@ -54,7 +54,7 @@ check_root() {
 
 check_installed() {
     if [[ ! -d "$INSTALL_DIR" ]]; then
-        error "bot is not installed. Run install.sh first."
+        error "BananaBot is not installed. Run install.sh first."
         exit 1
     fi
 }
@@ -96,7 +96,7 @@ print_header() {
     clear
     echo -e "${BOLD}${BLUE}"
     echo "  ╔══════════════════════════════════════════╗"
-    echo "  ║       bot — Bot Management Panel       ║"
+    echo "  ║       BananaBot — Bot Management Panel       ║"
     echo "  ╚══════════════════════════════════════════╝"
     echo -e "${NC}"
     bot_status
@@ -407,11 +407,11 @@ action_update() {
     fi
     log "Fetching latest version from GitHub..."
     # پشتیبان از .env
-    cp "$ENV_FILE" "/tmp/.env.bot.bak"
+    cp "$ENV_FILE" "/tmp/.env.bananabot.bak"
     git -C "$INSTALL_DIR" fetch origin >> /dev/null 2>&1
     git -C "$INSTALL_DIR" reset --hard origin/main >> /dev/null 2>&1
     # بازگرداندن .env
-    cp "/tmp/.env.bot.bak" "$ENV_FILE"
+    cp "/tmp/.env.bananabot.bak" "$ENV_FILE"
     # به‌روزرسانی کتابخانه‌ها
     log "Updating Python libraries..."
     "$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt" --quiet
@@ -422,7 +422,7 @@ action_update() {
         log "Setting up the auto-payment webhook service (new since your last install)..."
         cat > "/etc/systemd/system/${WEBHOOK_SERVICE}.service" << EOF
 [Unit]
-Description=bot — Auto-Payment Webhook (bank SMS)
+Description=BananaBot — Auto-Payment Webhook (bank SMS)
 After=network.target
 Wants=network-online.target
 
@@ -492,7 +492,7 @@ action_uninstall() {
     log "Removing project files..."
     rm -rf "$INSTALL_DIR"
 
-    success "bot completely removed."
+    success "BananaBot completely removed."
     echo ""
     exit 0
 }

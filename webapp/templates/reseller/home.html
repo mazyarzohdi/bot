@@ -1,0 +1,84 @@
+{% extends "shared/base.html" %}
+{% block title %}پنل نمایندگی{% endblock %}
+{% block page_title %}پنل نمایندگی{% endblock %}
+{% block nav_reseller %}active{% endblock %}
+{% block content %}
+
+<div class="grid-2">
+  <div class="card">
+    <h2 class="card-title"><i class="fa fa-database"></i> حجم پنل نمایندگی</h2>
+    <div class="balance-display">{{ remaining_gb|floatformat:0 }} <span>GB باقی‌مانده</span></div>
+    <p class="wallet-note">
+      از مجموع {{ reseller.total_volume_gb|floatformat:0 }} GB — مصرف‌شده توسط کانفیگ‌های شما: {{ used_gb|floatformat:0 }} GB
+    </p>
+  </div>
+  <div class="card">
+    <h2 class="card-title"><i class="fa fa-clock"></i> انقضای پنل</h2>
+    <div class="card-number" style="font-size:16px;">{{ reseller.expires_at }}</div>
+    <p class="wallet-note">پلن فعلی: {{ reseller.plan_name|default:"—" }}</p>
+  </div>
+</div>
+
+<div class="card mt-3">
+  <h2 class="card-title"><i class="fa fa-plus"></i> ساخت کانفیگ جدید</h2>
+  {% if remaining_gb <= 0 %}
+    <p class="empty-text">حجم شما تمام شده است. برای ساخت کانفیگ جدید، ابتدا حجم کانفیگ‌های قدیمی را کم کنید یا پلن نمایندگی خود را ارتقا دهید.</p>
+  {% elif not panels %}
+    <p class="empty-text">هنوز هیچ پنلی توسط ادمین اصلی فعال نشده است.</p>
+  {% else %}
+  <form method="post" action="{% url 'panel:reseller_config_create' %}">
+    {% csrf_token %}
+    <div class="form-group">
+      <label>نام دلخواه کانفیگ</label>
+      <input type="text" name="label" class="input" placeholder="مثلاً: مشتری ۱" maxlength="64"/>
+    </div>
+    <div class="form-group">
+      <label>پنل</label>
+      <select name="panel_id" class="input" required>
+        {% for p in panels %}
+        <option value="{{ p.id }}">{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="grid-2">
+      <div class="form-group">
+        <label>حجم (GB) — حداکثر {{ remaining_gb|floatformat:0 }}</label>
+        <input type="number" name="volume_gb" class="input" min="0.1" max="{{ remaining_gb }}" step="0.1" required/>
+      </div>
+      <div class="form-group">
+        <label>مدت (روز)</label>
+        <input type="number" name="duration_days" class="input" min="1" step="1" required/>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary w-full mt-2"><i class="fa fa-bolt"></i> ساخت کانفیگ</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card mt-3">
+  <h2 class="card-title"><i class="fa fa-list"></i> کانفیگ‌های من</h2>
+  {% if configs %}
+  <table class="table">
+    <thead>
+      <tr><th>نام</th><th>پنل</th><th>حجم</th><th>وضعیت</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for c in configs %}
+      <tr>
+        <td>{{ c.label|default:c.email }}</td>
+        <td>{{ c.panel_name }}</td>
+        <td>{{ c.volume_gb|floatformat:0 }} GB</td>
+        <td>
+          {% if c.status == 'active' %}<span class="badge-green">فعال</span>
+          {% else %}<span class="badge-red">غیرفعال</span>{% endif %}
+        </td>
+        <td><a href="{% url 'panel:reseller_config_detail' c.id %}" class="btn btn-sm btn-primary"><i class="fa fa-cog"></i></a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="empty-text">هنوز کانفیگی نساخته‌اید.</p>
+  {% endif %}
+</div>
+{% endblock %}

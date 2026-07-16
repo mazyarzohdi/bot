@@ -2,7 +2,6 @@
 
 import json
 import time
-from datetime import datetime
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, HttpRequest, HttpResponse, Http404
 from django.urls import reverse
@@ -341,19 +340,19 @@ def _notify_payment_status(payment: dict, status: str, note: str = ""):
                 reply_markup = {"inline_keyboard": [[
                     {"text": "🔁 تکمیل تمدید سرویس", "callback_data": f"svc_renew_ok:{payment['renew_sub_id']}"},
                 ]]}
-            elif payment.get("reseller_plan_id"):
-                plan = bot_db.get_reseller_plan(payment["reseller_plan_id"])
-                if plan:
-                    text += f"\n\nحالا می‌توانید خرید/تمدید نمایندگی «{plan['name']}» را تکمیل کنید 👇"
-                    reply_markup = {"inline_keyboard": [[
-                        {"text": "🤝 تکمیل خرید/تمدید نمایندگی", "callback_data": f"res_confirm:{payment['reseller_plan_id']}"},
-                    ]]}
             elif payment.get("product_id"):
                 product = bot_db.get_product(payment["product_id"])
                 if product:
                     text += f"\n\nحالا می‌توانید خرید «{product['name']}» را تکمیل کنید 👇"
                     reply_markup = {"inline_keyboard": [[
                         {"text": "🛒 تکمیل خرید", "callback_data": f"confirm_buy:{payment['product_id']}"},
+                    ]]}
+            elif payment.get("reseller_plan_id"):
+                plan = bot_db.get_reseller_plan(payment["reseller_plan_id"])
+                if plan:
+                    text += f"\n\nحالا می‌توانید خرید پلن نمایندگی «{plan['name']}» را تکمیل کنید 👇"
+                    reply_markup = {"inline_keyboard": [[
+                        {"text": "🤝 تکمیل خرید نمایندگی", "callback_data": f"resplan_confirm:{payment['reseller_plan_id']}"},
                     ]]}
             if note:
                 text += f"\n📝 یادداشت: {note}"
@@ -646,378 +645,245 @@ def user_wallet(request: HttpRequest):
     })
 
 
-# ── Reseller panel (user side — Mini App) ───────────────────────────────────
+# ── Reseller panel ────────────────────────────────────────────────────────────
 
-def _reseller_locked(reseller: dict) -> bool:
-    if not reseller:
-        return True
-    if reseller.get("status") != "active":
-        return True
-    expires_at = reseller.get("expires_at") or 0
-    return bool(expires_at) and expires_at < int(time.time())
+@login_required
+def reseller_home(request: HttpRequest):
+    tg_user = get_current_user(request)
+    db_user = bot_db.get_user_by_telegram_id(int(tg_user["id"]))
+    reseller = bot_db.get_reseller_by_user(db_user["id"]) if db_user else None
 
+    context = {
+        "tg_user": tg_user, "db_user": db_user, "is_admin": is_admin(request),
+        "reseller": reseller,
+    }
 
-def _reseller_quota_available(reseller: dict, exclude_config_id: int | None = None) -> float:
-    used = bot_db.get_reseller_used_gb(reseller["id"])
-    if exclude_config_id:
-        cfg = bot_db.get_reseller_config(exclude_config_id)
-        if cfg and cfg["status"] != "deleted":
-            used -= cfg["volume_gb"]
-    return max(0.0, reseller["quota_gb"] - used)
+    # Not a reseller yet, plan expired, or admin disabled the account — the
+    # panel is locked either way, and purchasing/renewing a plan only
+    # happens from inside the bot (🤝 پنل نمایندگی), so this page just
+    # explains the situation instead of duplicating the purchase flow here.
+    if not reseller or reseller["status"] != "active":
+        return render(request, "reseller/locked.html", context)
 
+    used_gb = bot_db.get_reseller_configs_volume_used(reseller["id"])
+    remaining_gb = max(0, reseller["total_volume_gb"] - used_gb)
+    configs = bot_db.get_reseller_configs(reseller["id"])
+    panels = bot_db.get_panels(active_only=True)
 
-def _reseller_build_sub_link(reseller: dict, sub_id: str) -> str:
-    template = reseller.get("sub_link_template") or ""
-    if not template or not sub_id:
-        return ""
-    try:
-        return template.format(sub_id=sub_id)
-    except (KeyError, IndexError):
-        return ""
-
-
-def _format_ts(ts: int) -> str:
-    if not ts:
-        return "نامحدود"
-    if ts < int(time.time()):
-        return "منقضی‌شده"
-    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
-
-
-def _annotate_config_usage(reseller: dict, configs: list[dict]) -> None:
-    """برای هر کانفیگِ فعال/غیرفعال‌موقت، حجم واقعی مصرف‌شده و باقی‌مانده را
-    از پنل X-UI می‌گیرد و روی دیکشنری کانفیگ می‌گذارد تا نماینده ببیند هر
-    مشتری چقدر مصرف کرده و چقدر برایش مانده."""
-    panel_url = reseller.get("panel_url")
-    api_token = reseller.get("api_token")
-    for c in configs:
-        if c["status"] == "deleted":
-            continue
-        try:
-            traffic = xui_client.get_client_traffic(panel_url, api_token, c["email"])
-            up = traffic.get("up") or 0
-            down = traffic.get("down") or 0
-            c["usage_used_gb"] = (up + down) / (1024 ** 3)
-        except xui_client.XUIError:
-            c["usage_used_gb"] = None
-
-        if c["usage_used_gb"] is None:
-            c["usage_remaining_gb"] = None
-            c["usage_percent"] = None
-        elif c["volume_gb"] > 0:
-            c["usage_remaining_gb"] = max(0.0, c["volume_gb"] - c["usage_used_gb"])
-            c["usage_percent"] = min(100, round((c["usage_used_gb"] / c["volume_gb"]) * 100))
-        else:
-            c["usage_remaining_gb"] = None  # حجم نامحدود
-            c["usage_percent"] = 0
+    context.update({
+        "used_gb": used_gb, "remaining_gb": remaining_gb,
+        "configs": configs, "panels": panels,
+    })
+    return render(request, "reseller/home.html", context)
 
 
 @login_required
-def reseller_panel(request: HttpRequest):
+@require_POST
+def reseller_config_create(request: HttpRequest):
     tg_user = get_current_user(request)
     db_user = bot_db.get_user_by_telegram_id(int(tg_user["id"]))
-    if not db_user:
-        messages.error(request, "حساب کاربری شما در ربات ثبت نشده. ابتدا ربات را استارت کنید.")
-        return redirect("panel:dashboard")
+    reseller = bot_db.get_reseller_by_user(db_user["id"]) if db_user else None
+    if not reseller or reseller["status"] != "active":
+        messages.error(request, "پنل نمایندگی شما فعال نیست.")
+        return redirect("panel:reseller_home")
 
-    reseller = bot_db.get_reseller_by_user_id(db_user["id"])
-    if not reseller:
-        messages.info(request, "شما هنوز پنل نمایندگی ندارید. برای خرید پلن نمایندگی از داخل ربات اقدام کنید.")
-        return redirect("panel:dashboard")
-
-    locked = _reseller_locked(reseller)
-
-    if request.method == "POST":
-        if locked:
-            messages.error(request, "پنل نمایندگی شما قفل است (غیرفعال یا منقضی‌شده). برای ادامه، پلن را از داخل ربات تمدید کنید.")
-            return redirect("panel:reseller_panel")
-
-        action = request.POST.get("action")
-        panel = {
-            "url": reseller["panel_url"], "api_token": reseller["api_token"],
-        }
-        try:
-            inbound_ids = json.loads(reseller.get("inbound_ids") or "[]")
-        except (TypeError, ValueError):
-            inbound_ids = []
-        on_hold = bool(reseller.get("on_hold"))
-
-        if action == "create_config":
-            label = (request.POST.get("label") or "").strip()
-            try:
-                volume_gb = float(request.POST.get("volume_gb", 0))
-                duration_days = int(request.POST.get("duration_days", 0))
-            except ValueError:
-                messages.error(request, "مقادیر حجم/زمان نامعتبر است.")
-                return redirect("panel:reseller_panel")
-
-            if volume_gb <= 0 or duration_days <= 0:
-                messages.error(request, "حجم و زمان باید بزرگتر از صفر باشند.")
-                return redirect("panel:reseller_panel")
-
-            available = _reseller_quota_available(reseller)
-            if volume_gb > available:
-                messages.error(request, f"حجم درخواستی بیشتر از حجم باقیمانده شماست ({available:.2f} GB).")
-                return redirect("panel:reseller_panel")
-
-            expiry_ms = xui_client.compute_expiry_ms(duration_days, on_hold=on_hold)
-            if not on_hold and reseller["expires_at"] and expiry_ms > reseller["expires_at"] * 1000:
-                messages.error(request, "زمان درخواستی از تاریخ انقضای پلن نمایندگی شما بیشتر است.")
-                return redirect("panel:reseller_panel")
-
-            if not inbound_ids:
-                messages.error(request, "برای این پنل Inbound تنظیم نشده. با ادمین تماس بگیرید.")
-                return redirect("panel:reseller_panel")
-
-            email = xui_client.generate_client_email(int(tg_user["id"]))
-            sub_id = xui_client.generate_sub_id()
-            try:
-                xui_client.add_client(
-                    panel["url"], panel["api_token"], inbound_ids, email,
-                    volume_gb, expiry_ms, sub_id=sub_id, tg_id=int(tg_user["id"]),
-                    comment=f"reseller_{reseller['id']}", on_hold=on_hold,
-                )
-                links = xui_client.get_client_links(panel["url"], panel["api_token"], email)
-            except xui_client.XUIError as e:
-                messages.error(request, f"خطا در ساخت کانفیگ روی پنل: {e}")
-                return redirect("panel:reseller_panel")
-
-            sub_link = _reseller_build_sub_link(reseller, sub_id)
-            bot_db.add_reseller_config(
-                reseller_id=reseller["id"], label=label, email=email, sub_id=sub_id,
-                volume_gb=volume_gb, expiry_time=expiry_ms,
-                config_link=(links[0] if links else ""), config_links=json.dumps(links),
-                sub_link=sub_link, status="active",
-            )
-            messages.success(request, "✅ کانفیگ با موفقیت ساخته شد.")
-
-        elif action in ("update_config", "rename_config", "toggle_config", "delete_config"):
-            config_id = int(request.POST.get("config_id", 0) or 0)
-            config = bot_db.get_reseller_config(config_id)
-            if not config or config["reseller_id"] != reseller["id"]:
-                messages.error(request, "کانفیگ پیدا نشد.")
-                return redirect("panel:reseller_panel")
-
-            if action == "rename_config":
-                label = (request.POST.get("label") or "").strip()
-                bot_db.update_reseller_config(config_id, label=label)
-                messages.success(request, "✅ نام کانفیگ بروزرسانی شد.")
-
-            elif action == "toggle_config":
-                new_status = "disabled" if config["status"] == "active" else "active"
-                try:
-                    client_data = xui_client.get_client(panel["url"], panel["api_token"], config["email"]) or {}
-                    client_data.update({
-                        "email": config["email"],
-                        "enable": (new_status == "active"),
-                    })
-                    xui_client.update_client(panel["url"], panel["api_token"], config["email"], client_data)
-                except xui_client.XUIError as e:
-                    messages.error(request, f"خطا در تغییر وضعیت روی پنل: {e}")
-                    return redirect("panel:reseller_panel")
-                bot_db.update_reseller_config(config_id, status=new_status)
-                messages.success(
-                    request,
-                    "✅ کانفیگ موقتاً غیرفعال شد." if new_status == "disabled" else "✅ کانفیگ دوباره فعال شد.",
-                )
-
-            elif action == "delete_config":
-                # مهم: قبل از حذف، حجم واقعیِ مصرف‌شده‌ی این کانفیگ را از پنل
-                # می‌گیریم و برای همیشه ثبت می‌کنیم؛ فقط حجمِ استفاده‌نشده به
-                # سقف نماینده برمی‌گردد. در غیر این صورت نماینده می‌توانست با
-                # ساخت و حذف مکرر کانفیگ، حجم مصرف‌شده‌ی واقعی را دور بزند.
-                try:
-                    traffic = xui_client.get_client_traffic(panel["url"], panel["api_token"], config["email"])
-                    up = traffic.get("up") or 0
-                    down = traffic.get("down") or 0
-                    used_gb = (up + down) / (1024 ** 3)
-                except xui_client.XUIError:
-                    # اگر نشد ترافیک واقعی را بگیریم، برای جلوگیری از سوءاستفاده
-                    # کل حجمِ تخصیص‌یافته را «مصرف‌شده» در نظر می‌گیریم (چیزی
-                    # به سقف نماینده برنمی‌گردد)، نه صفر.
-                    used_gb = config["volume_gb"]
-
-                used_gb = max(0.0, min(used_gb, config["volume_gb"]))
-                freed_gb = config["volume_gb"] - used_gb
-
-                try:
-                    xui_client.delete_client(panel["url"], panel["api_token"], config["email"])
-                except Exception:
-                    pass
-
-                bot_db.update_reseller_config(config_id, status="deleted", consumed_gb=round(used_gb, 3))
-                messages.success(
-                    request,
-                    f"✅ کانفیگ حذف شد. حجم مصرف‌شده «{used_gb:.2f} GB» برای همیشه از سقف نمایندگی شما کسر ماند "
-                    f"و فقط حجم استفاده‌نشده «{freed_gb:.2f} GB» به حساب شما بازگشت.",
-                )
-
-            elif action == "update_config":
-                try:
-                    volume_gb = float(request.POST.get("volume_gb", 0))
-                    duration_days = int(request.POST.get("duration_days", 0))
-                except ValueError:
-                    messages.error(request, "مقادیر حجم/زمان نامعتبر است.")
-                    return redirect("panel:reseller_panel")
-                if volume_gb <= 0 or duration_days <= 0:
-                    messages.error(request, "حجم و زمان باید بزرگتر از صفر باشند.")
-                    return redirect("panel:reseller_panel")
-
-                available = _reseller_quota_available(reseller, exclude_config_id=config_id)
-                if volume_gb > available:
-                    messages.error(request, f"حجم درخواستی بیشتر از حجم باقیمانده شماست ({available:.2f} GB).")
-                    return redirect("panel:reseller_panel")
-
-                expiry_ms = xui_client.compute_expiry_ms(duration_days, on_hold=on_hold)
-                if not on_hold and reseller["expires_at"] and expiry_ms > reseller["expires_at"] * 1000:
-                    messages.error(request, "زمان درخواستی از تاریخ انقضای پلن نمایندگی شما بیشتر است.")
-                    return redirect("panel:reseller_panel")
-
-                try:
-                    client_data = xui_client.get_client(panel["url"], panel["api_token"], config["email"]) or {}
-                    client_data.update({
-                        "email": config["email"],
-                        "totalGB": int(volume_gb * (1024 ** 3)),
-                        "expiryTime": expiry_ms,
-                        "enable": True,
-                    })
-                    xui_client.update_client(panel["url"], panel["api_token"], config["email"], client_data)
-                    xui_client.reset_client_traffic(panel["url"], panel["api_token"], config["email"])
-                except xui_client.XUIError as e:
-                    messages.error(request, f"خطا در بروزرسانی کانفیگ روی پنل: {e}")
-                    return redirect("panel:reseller_panel")
-
-                bot_db.update_reseller_config(
-                    config_id, volume_gb=volume_gb, expiry_time=expiry_ms, status="active",
-                )
-                messages.success(request, "✅ کانفیگ با موفقیت تمدید/ویرایش شد.")
-
-        return redirect("panel:reseller_panel")
-
-    configs = bot_db.get_reseller_configs(reseller["id"])
-    used_gb = bot_db.get_reseller_used_gb(reseller["id"])
-    remaining_gb = max(0.0, reseller["quota_gb"] - used_gb)
-
-    for c in configs:
-        ms = c.get("expiry_time") or 0
-        if not ms:
-            c["expiry_display"] = "نامحدود"
-        elif ms < 0:
-            c["expiry_display"] = f"{abs(ms) // 86400000} روز پس از اولین اتصال"
-        else:
-            secs = ms / 1000
-            c["expiry_display"] = (
-                "منقضی‌شده" if secs < time.time()
-                else datetime.fromtimestamp(secs).strftime("%Y-%m-%d %H:%M")
-            )
-
-    _annotate_config_usage(reseller, configs)
-
-    return render(request, "user/reseller.html", {
-        "db_user": db_user, "tg_user": tg_user, "is_admin": is_admin(request),
-        "reseller": reseller, "configs": configs, "locked": locked,
-        "used_gb": used_gb, "remaining_gb": remaining_gb,
-        "expires_at_text": _format_ts(reseller["expires_at"]),
-    })
-
-
-# ── Admin: Reseller plans ────────────────────────────────────────────────────
-
-@admin_required
-def admin_reseller_plans(request: HttpRequest):
-    plans = bot_db.get_reseller_plans(active_only=False)
-    panels = bot_db.get_panels()
-    return render(request, "admin/reseller_plans.html", {
-        "plans": plans, "panels": panels, "is_admin": True,
-    })
-
-
-@admin_required
-def admin_reseller_plan_edit(request: HttpRequest, plan_id: int = 0):
-    panels = bot_db.get_panels()
-    plan = bot_db.get_reseller_plan(plan_id) if plan_id else None
-
-    if request.method == "POST":
-        data = {
-            "name": request.POST["name"],
-            "panel_id": int(request.POST["panel_id"]),
-            "volume_gb": float(request.POST["volume_gb"]),
-            "duration_days": int(request.POST["duration_days"]),
-            "price": int(request.POST["price"]),
-            "description": request.POST.get("description", ""),
-            "is_active": 1 if request.POST.get("is_active") else 0,
-        }
-        if plan_id:
-            bot_db.update_reseller_plan(plan_id, **data)
-            messages.success(request, "پلن نمایندگی ویرایش شد.")
-        else:
-            bot_db.add_reseller_plan(**{k: v for k, v in data.items() if k != "is_active"})
-            messages.success(request, "پلن نمایندگی اضافه شد.")
-        return redirect("panel:admin_reseller_plans")
-
-    return render(request, "admin/reseller_plan_edit.html", {
-        "plan": plan, "panels": panels, "is_admin": True,
-    })
-
-
-@admin_required
-@require_POST
-def admin_reseller_plan_delete(request: HttpRequest, plan_id: int):
+    label = (request.POST.get("label") or "").strip()[:64]
     try:
-        bot_db.delete_reseller_plan(plan_id)
-        messages.success(request, "پلن نمایندگی حذف شد.")
-    except Exception:
-        messages.error(request, "این پلن توسط نماینده‌ای استفاده شده و قابل حذف کامل نیست.")
-    return redirect("panel:admin_reseller_plans")
+        volume_gb = float(request.POST.get("volume_gb", 0))
+        duration_days = int(request.POST.get("duration_days", 0))
+        panel_id = int(request.POST.get("panel_id", 0))
+    except ValueError:
+        messages.error(request, "مقادیر وارد شده نامعتبر است.")
+        return redirect("panel:reseller_home")
+
+    if volume_gb <= 0 or duration_days <= 0:
+        messages.error(request, "حجم و مدت باید بزرگ‌تر از صفر باشند.")
+        return redirect("panel:reseller_home")
+
+    # این چک همون قیدیه که کاربر خواسته بود: نماینده هیچ‌وقت نمی‌تونه
+    # مجموع حجم کانفیگ‌هاش از سقفِ پلن خریداری‌شده بیشتر بشه.
+    used_gb = bot_db.get_reseller_configs_volume_used(reseller["id"])
+    if used_gb + volume_gb > reseller["total_volume_gb"] + 1e-9:
+        remaining = max(0, reseller["total_volume_gb"] - used_gb)
+        messages.error(request, f"حجم درخواستی بیشتر از حجم باقی‌مانده‌ی شماست. حجم باقی‌مانده: {remaining:g} GB")
+        return redirect("panel:reseller_home")
+
+    panel = bot_db.get_panel(panel_id)
+    if not panel or not panel.get("is_active"):
+        messages.error(request, "پنل انتخاب‌شده معتبر نیست.")
+        return redirect("panel:reseller_home")
+
+    try:
+        inbound_ids = json.loads(panel["inbound_ids"] or "[]")
+    except (ValueError, TypeError):
+        inbound_ids = []
+    if not inbound_ids:
+        messages.error(request, "این پنل هنوز Inbound تنظیم‌شده ندارد. با ادمین اصلی تماس بگیرید.")
+        return redirect("panel:reseller_home")
+
+    email = xui_client.generate_client_email(int(tg_user["id"]))
+    sub_id = xui_client.generate_sub_id()
+    on_hold = bool(panel.get("on_hold"))
+    expiry_ms = xui_client.compute_expiry_ms(duration_days, on_hold=on_hold)
+
+    try:
+        xui_client.add_client(
+            panel["url"], panel["api_token"], email=email, inbound_ids=inbound_ids,
+            total_gb=volume_gb, expiry_time_ms=expiry_ms, sub_id=sub_id,
+            comment=f"reseller_{reseller['id']}", tg_id=int(tg_user["id"]),
+        )
+    except xui_client.XUIError as e:
+        messages.error(request, f"خطا در ساخت کانفیگ روی پنل: {e}")
+        return redirect("panel:reseller_home")
+
+    try:
+        links = xui_client.get_client_links(panel["url"], panel["api_token"], email)
+    except xui_client.XUIError:
+        links = []
+    config_link = links[0] if links else ""
+    sub_link = ""
+    template = panel.get("sub_link_template") or ""
+    if template:
+        try:
+            sub_link = template.format(sub_id=sub_id)
+        except (KeyError, IndexError):
+            sub_link = ""
+
+    bot_db.create_reseller_config(
+        reseller["id"], panel_id, email, label, sub_id, volume_gb, expiry_ms,
+        config_link, links, sub_link,
+    )
+    messages.success(request, "✅ کانفیگ با موفقیت ساخته شد.")
+    return redirect("panel:reseller_home")
 
 
-# ── Admin: Resellers review ──────────────────────────────────────────────────
+@login_required
+def reseller_config_detail(request: HttpRequest, config_id: int):
+    tg_user = get_current_user(request)
+    db_user = bot_db.get_user_by_telegram_id(int(tg_user["id"]))
+    reseller = bot_db.get_reseller_by_user(db_user["id"]) if db_user else None
+    config = bot_db.get_reseller_config(config_id)
 
-@admin_required
-def admin_resellers(request: HttpRequest):
-    resellers = bot_db.get_all_resellers()
-    now = int(time.time())
-    for r in resellers:
-        r["used_gb"] = bot_db.get_reseller_used_gb(r["id"])
-        r["remaining_gb"] = max(0.0, r["quota_gb"] - r["used_gb"])
-        r["expired"] = bool(r["expires_at"]) and r["expires_at"] < now
-        r["expires_at_text"] = _format_ts(r["expires_at"])
-    return render(request, "admin/resellers.html", {
-        "resellers": resellers, "is_admin": True,
-    })
-
-
-@admin_required
-def admin_reseller_detail(request: HttpRequest, reseller_id: int):
-    reseller = bot_db.get_reseller(reseller_id)
-    if not reseller:
-        messages.error(request, "نماینده پیدا نشد.")
-        return redirect("panel:admin_resellers")
+    # ownership check — a reseller may only ever touch their own configs
+    if not reseller or not config or config["reseller_id"] != reseller["id"]:
+        messages.error(request, "کانفیگ پیدا نشد.")
+        return redirect("panel:reseller_home")
 
     if request.method == "POST":
-        action = request.POST.get("action")
-        if action == "disable":
-            bot_db.set_reseller_status(reseller_id, "disabled")
-            telegram_api.send_message(
-                int(reseller["telegram_id"]),
-                "🚫 حساب نمایندگی شما توسط ادمین غیرفعال شد. پنل تحت وب نمایندگی شما قفل شده است.",
-            )
-            messages.warning(request, "حساب نماینده غیرفعال شد.")
-        elif action == "enable":
-            bot_db.set_reseller_status(reseller_id, "active")
-            telegram_api.send_message(
-                int(reseller["telegram_id"]),
-                "✅ حساب نمایندگی شما دوباره فعال شد.",
-            )
-            messages.success(request, "حساب نماینده فعال شد.")
-        return redirect("panel:admin_reseller_detail", reseller_id=reseller_id)
+        if reseller["status"] != "active":
+            messages.error(request, "پنل نمایندگی شما فعال نیست.")
+            return redirect("panel:reseller_home")
 
-    configs = bot_db.get_reseller_configs(reseller_id)
-    used_gb = bot_db.get_reseller_used_gb(reseller_id)
-    _annotate_config_usage(reseller, configs)
-    return render(request, "admin/reseller_detail.html", {
-        "reseller": reseller, "configs": configs, "used_gb": used_gb,
-        "remaining_gb": max(0.0, reseller["quota_gb"] - used_gb),
-        "expires_at_text": _format_ts(reseller["expires_at"]),
-        "is_admin": True,
+        action = request.POST.get("action")
+
+        if action == "delete":
+            ok = xui_client.delete_client(config["panel_url"], config["api_token"], config["email"])
+            bot_db.mark_reseller_config_deleted(config_id)
+            messages.success(
+                request,
+                "✅ کانفیگ حذف شد." if ok else
+                "⚠️ کانفیگ از دیتابیس حذف شد، اما حذف آن از پنل x-ui ناموفق بود.",
+            )
+            return redirect("panel:reseller_home")
+
+        elif action == "toggle":
+            try:
+                client_data = xui_client.get_client(config["panel_url"], config["api_token"], config["email"])
+                if not client_data:
+                    raise xui_client.XUIError("کلاینت روی پنل پیدا نشد")
+                new_enable = not client_data.get("enable", True)
+                update_payload = {**client_data, "email": config["email"], "enable": new_enable}
+                xui_client.update_client(config["panel_url"], config["api_token"], config["email"], update_payload)
+            except xui_client.XUIError as e:
+                messages.error(request, f"خطا در ارتباط با پنل: {e}")
+                return redirect("panel:reseller_config_detail", config_id=config_id)
+            bot_db.update_reseller_config(config_id, status="active" if new_enable else "disabled")
+            messages.success(request, "✅ کانفیگ فعال شد." if new_enable else "🚫 کانفیگ موقتاً غیرفعال شد.")
+            return redirect("panel:reseller_config_detail", config_id=config_id)
+
+        elif action == "rename":
+            label = (request.POST.get("label") or "").strip()[:64]
+            bot_db.update_reseller_config(config_id, label=label)
+            messages.success(request, "✅ نام کانفیگ بروزرسانی شد.")
+            return redirect("panel:reseller_config_detail", config_id=config_id)
+
+        elif action == "resize":
+            try:
+                new_volume_gb = float(request.POST.get("volume_gb", 0))
+                new_duration_days = int(request.POST.get("duration_days", 0))
+            except ValueError:
+                messages.error(request, "مقادیر نامعتبر است.")
+                return redirect("panel:reseller_config_detail", config_id=config_id)
+            if new_volume_gb <= 0 or new_duration_days <= 0:
+                messages.error(request, "حجم و مدت باید بزرگ‌تر از صفر باشند.")
+                return redirect("panel:reseller_config_detail", config_id=config_id)
+
+            used_excl = bot_db.get_reseller_configs_volume_used(reseller["id"], exclude_config_id=config_id)
+            if used_excl + new_volume_gb > reseller["total_volume_gb"] + 1e-9:
+                remaining = max(0, reseller["total_volume_gb"] - used_excl)
+                messages.error(request, f"حجم درخواستی بیشتر از سقف مجاز است. حداکثر: {remaining:g} GB")
+                return redirect("panel:reseller_config_detail", config_id=config_id)
+
+            on_hold = bool(config.get("on_hold"))
+            new_expiry_ms = xui_client.compute_expiry_ms(new_duration_days, on_hold=on_hold)
+            try:
+                client_data = xui_client.get_client(config["panel_url"], config["api_token"], config["email"])
+                if not client_data:
+                    raise xui_client.XUIError("کلاینت روی پنل پیدا نشد")
+                update_payload = {
+                    **client_data, "email": config["email"],
+                    "totalGB": int(new_volume_gb * (1024 ** 3)),
+                    "expiryTime": new_expiry_ms, "enable": True,
+                }
+                xui_client.update_client(config["panel_url"], config["api_token"], config["email"], update_payload)
+                xui_client.reset_client_traffic(config["panel_url"], config["api_token"], config["email"])
+            except xui_client.XUIError as e:
+                messages.error(request, f"خطا در بروزرسانی روی پنل: {e}")
+                return redirect("panel:reseller_config_detail", config_id=config_id)
+
+            bot_db.update_reseller_config(config_id, volume_gb=new_volume_gb, expiry_time=new_expiry_ms, status="active")
+            messages.success(request, "✅ حجم و زمان کانفیگ تغییر کرد (ترافیک مصرفی هم ریست شد).")
+            return redirect("panel:reseller_config_detail", config_id=config_id)
+
+        elif action == "renew":
+            try:
+                extra_days = int(request.POST.get("extra_days", 0))
+            except ValueError:
+                extra_days = 0
+            if extra_days <= 0:
+                messages.error(request, "تعداد روز نامعتبر است.")
+                return redirect("panel:reseller_config_detail", config_id=config_id)
+
+            on_hold = bool(config.get("on_hold"))
+            current_expiry_ms = config.get("expiry_time") or 0
+            if on_hold:
+                current_days_left = abs(current_expiry_ms) // 86400000 if current_expiry_ms < 0 else 0
+                new_expiry_ms = -(current_days_left + extra_days) * 86400000
+            else:
+                now_ms = int(time.time() * 1000)
+                base_ms = current_expiry_ms if current_expiry_ms > now_ms else now_ms
+                new_expiry_ms = base_ms + extra_days * 86400000
+
+            try:
+                client_data = xui_client.get_client(config["panel_url"], config["api_token"], config["email"])
+                if not client_data:
+                    raise xui_client.XUIError("کلاینت روی پنل پیدا نشد")
+                update_payload = {**client_data, "email": config["email"], "expiryTime": new_expiry_ms, "enable": True}
+                xui_client.update_client(config["panel_url"], config["api_token"], config["email"], update_payload)
+            except xui_client.XUIError as e:
+                messages.error(request, f"خطا در تمدید روی پنل: {e}")
+                return redirect("panel:reseller_config_detail", config_id=config_id)
+
+            bot_db.update_reseller_config(config_id, expiry_time=new_expiry_ms, status="active")
+            messages.success(request, f"✅ کانفیگ {extra_days} روز تمدید شد.")
+            return redirect("panel:reseller_config_detail", config_id=config_id)
+
+    config = bot_db.get_reseller_config(config_id)  # re-fetch in case an action above just changed it
+    try:
+        links = json.loads(config.get("config_links") or "[]")
+    except (ValueError, TypeError):
+        links = []
+    return render(request, "reseller/config_detail.html", {
+        "tg_user": tg_user, "is_admin": is_admin(request),
+        "config": config, "links": links,
     })

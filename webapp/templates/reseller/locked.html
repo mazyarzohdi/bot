@@ -1,0 +1,22 @@
+{% extends "shared/base.html" %}
+{% block title %}پنل نمایندگی{% endblock %}
+{% block page_title %}پنل نمایندگی{% endblock %}
+{% block nav_reseller %}active{% endblock %}
+{% block content %}
+<div class="card empty-card">
+  <i class="fa fa-handshake fa-2x"></i>
+  {% if not reseller %}
+    <p>شما هنوز پنل نمایندگی فعالی ندارید.</p>
+    <p class="wallet-note">برای خرید پلن نمایندگی، از داخل ربات تلگرام گزینه‌ی «🤝 پنل نمایندگی» را از منوی اصلی بزنید.</p>
+  {% elif reseller.status == 'expired' %}
+    <p>مهلت پلن نمایندگی شما به پایان رسیده و این پنل قفل شده است.</p>
+    <p class="wallet-note">
+      حجم کل قبلی: {{ reseller.total_volume_gb|floatformat:0 }} GB — تاریخ انقضا: {{ reseller.expires_at }}<br/>
+      برای فعال‌سازی دوباره (بدون از دست رفتن کانفیگ‌های قبلی)، از داخل ربات یکی از پلن‌های نمایندگی را دوباره بخرید.
+    </p>
+  {% elif reseller.status == 'disabled' %}
+    <p>حساب نمایندگی شما توسط ادمین غیرفعال شده است.</p>
+    <p class="wallet-note">برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.</p>
+  {% endif %}
+</div>
+{% endblock %}

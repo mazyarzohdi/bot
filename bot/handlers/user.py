@@ -2,7 +2,6 @@
 
 import logging
 import random
-import time
 from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
@@ -17,18 +16,17 @@ from bot.keyboards import (
     cancel_kb,
     channel_required_inline,
     confirm_buy_inline,
+    confirm_reseller_plan_inline,
     faq_inline,
     insufficient_balance_inline,
     insufficient_balance_renew_inline,
+    insufficient_balance_reseller_inline,
     main_menu,
     panels_buy_inline,
     payment_actions_inline,
     products_by_panel_inline,
     renew_confirm_inline,
-    reseller_confirm_inline,
-    reseller_insufficient_balance_inline,
     reseller_plans_inline,
-    reseller_status_inline,
     service_actions_inline,
     services_inline,
     tutorials_inline,
@@ -638,6 +636,127 @@ async def _resolve_trial_product(db) -> dict | None:
     }
 
 
+# ───────────────────────── Reseller panel ─────────────────────────
+
+def _reseller_status_text(reseller: dict, used_gb: float) -> str:
+    remaining_gb = max(0, reseller["total_volume_gb"] - used_gb)
+    status_label = {"active": "✅ فعال", "expired": "⏰ منقضی‌شده", "disabled": "🚫 غیرفعال"}.get(
+        reseller["status"], reseller["status"]
+    )
+    return (
+        f"🤝 پنل نمایندگی شما\n\n"
+        f"وضعیت: {status_label}\n"
+        f"حجم کل: {reseller['total_volume_gb']:g} GB\n"
+        f"حجم مصرف‌شده: {used_gb:g} GB\n"
+        f"حجم باقی‌مانده: {remaining_gb:g} GB\n"
+        f"انقضا: {reseller['expires_at'] or '—'}\n\n"
+        f"برای ساخت و مدیریت کانفیگ‌ها، پنل تحت وب را باز کنید 👇"
+    )
+
+
+@router.message(F.text == t("reseller_panel"))
+async def reseller_menu(message: Message, db_user: dict):
+    db = get_db()
+    reseller = await db.get_reseller_by_user(db_user["id"])
+
+    if reseller and reseller["status"] == "active":
+        used_gb = await db.get_reseller_configs_volume_used(reseller["id"])
+        await message.answer(_reseller_status_text(reseller, used_gb))
+        return
+
+    if reseller and reseller["status"] != "active":
+        used_gb = await db.get_reseller_configs_volume_used(reseller["id"])
+        await message.answer(
+            _reseller_status_text(reseller, used_gb)
+            + "\n\n⚠️ برای فعال‌سازی دوباره، یکی از پلن‌های زیر را خریداری کنید:"
+        )
+
+    plans = await db.get_reseller_plans(active_only=True)
+    if not plans:
+        await message.answer("❌ در حال حاضر پلن نمایندگی‌ای برای فروش وجود ندارد.")
+        return
+    await message.answer("🤝 یکی از پلن‌های نمایندگی را انتخاب کنید:", reply_markup=reseller_plans_inline(plans))
+
+
+@router.callback_query(F.data.startswith("resplan:"))
+async def reseller_plan_preview(callback: CallbackQuery):
+    plan_id = int(callback.data.split(":")[1])
+    db = get_db()
+    plan = await db.get_reseller_plan(plan_id)
+    if not plan:
+        await callback.answer("پلن پیدا نشد", show_alert=True)
+        return
+    text = (
+        f"🤝 {plan['name']}\n"
+        f"📊 حجم: {plan['volume_gb']:g} GB\n"
+        f"⏱ مدت: {plan['duration_days']} روز\n"
+        f"💰 قیمت: {plan['price']:,} تومان\n\n"
+        f"در صورت داشتن پنل نمایندگی فعال، حجم و مدت به پنل فعلی شما اضافه می‌شود."
+    )
+    await callback.message.edit_text(text, reply_markup=confirm_reseller_plan_inline(plan_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("resplan_confirm:"))
+async def reseller_plan_confirm(callback: CallbackQuery, db_user: dict):
+    plan_id = int(callback.data.split(":")[1])
+    db = get_db()
+    plan = await db.get_reseller_plan(plan_id)
+    if not plan:
+        await callback.answer("پلن پیدا نشد", show_alert=True)
+        return
+
+    fresh_user = await db._fetchone("SELECT * FROM users WHERE id = ?", (db_user["id"],))
+    balance = fresh_user["balance"] if fresh_user else db_user["balance"]
+
+    if balance < plan["price"]:
+        deficit = plan["price"] - balance
+        await callback.message.edit_text(
+            t("insufficient_balance", balance=balance, price=plan["price"], deficit=deficit),
+            reply_markup=insufficient_balance_reseller_inline(plan_id),
+        )
+        await callback.answer()
+        return
+
+    await db.update_user_balance(db_user["id"], -plan["price"])
+    reseller_id = await db.create_or_extend_reseller(db_user["id"], plan)
+    reseller = await db.get_reseller(reseller_id)
+
+    settings = get_settings()
+    panel_note = ""
+    if not settings.panel_url:
+        panel_note = "\n\n(آدرس پنل وب هنوز توسط ادمین تنظیم نشده — بعداً از همین منو دوباره بررسی کنید.)"
+    await callback.message.edit_text(
+        f"✅ پلن نمایندگی با موفقیت فعال شد!\n\n"
+        f"📊 حجم کل: {reseller['total_volume_gb']:g} GB\n"
+        f"⏱ انقضا: {reseller['expires_at']}\n\n"
+        f"برای ساخت کانفیگ، پنل تحت وب (دکمه‌ی «{t('web_panel')}» در منوی اصلی) را باز کنید 👇"
+        + panel_note
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("card_topup_resplan:"))
+async def card_topup_reseller_plan(callback: CallbackQuery, db_user: dict):
+    plan_id = int(callback.data.split(":")[1])
+    db = get_db()
+    plan = await db.get_reseller_plan(plan_id)
+    if not plan:
+        await callback.answer("پلن پیدا نشد", show_alert=True)
+        return
+
+    settings = get_settings()
+    card = settings.card_number or await db.get_setting("card_number", "")
+    if not card:
+        await callback.answer("❌ شماره کارت تنظیم نشده. با ادمین تماس بگیرید.", show_alert=True)
+        return
+
+    await _send_card_payment_instructions(
+        callback.message.answer, db, db_user["id"], plan["price"], reseller_plan_id=plan_id,
+    )
+    await callback.answer()
+
+
 @router.message(F.text == t("trial"))
 async def trial_account(message: Message, db_user: dict):
     db = get_db()
@@ -1014,10 +1133,6 @@ async def deposit_receipt(message: Message, db_user: dict):
         )
     if payment.get("renew_sub_id"):
         caption += f"\n🔁 برای تکمیل تمدید سرویس: #{payment['renew_sub_id']}"
-    elif payment.get("reseller_plan_id"):
-        plan = await db.get_reseller_plan(payment["reseller_plan_id"])
-        if plan:
-            caption += f"\n🤝 برای تکمیل خرید/تمدید نمایندگی: {plan['name']}"
     elif payment.get("product_id"):
         product = await db.get_product(payment["product_id"])
         if product:
@@ -1040,208 +1155,6 @@ async def deposit_receipt(message: Message, db_user: dict):
         await db.set_payment_notif_chats(payment["id"], sent_refs)
 
     await message.answer(t("deposit_pending"), reply_markup=main_menu())
-
-
-def _format_reseller_expiry(ts: int) -> str:
-    if not ts:
-        return "نامحدود"
-    if ts < int(time.time()):
-        return "منقضی شده"
-    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
-
-
-def _reseller_panel_url() -> str:
-    panel_url = (get_settings().panel_url or "").strip()
-    if not panel_url.startswith("https://"):
-        return ""
-    return panel_url.rstrip("/") + "/reseller/"
-
-
-async def _send_reseller_plans(answer):
-    db = get_db()
-    plans = await db.get_reseller_plans(active_only=True)
-    if not plans:
-        await answer("❌ در حال حاضر پلن نمایندگی‌ای تعریف نشده است.")
-        return
-    await answer(
-        "🤝 پلن‌های نمایندگی موجود:\nیک پلن را انتخاب کنید:",
-        reply_markup=reseller_plans_inline(plans),
-    )
-
-
-@router.message(F.text == t("reseller_panel"))
-async def reseller_panel_entry(message: Message, db_user: dict):
-    db = get_db()
-    reseller = await db.get_reseller_by_user(db_user["id"])
-    if not reseller:
-        await message.answer(
-            "🤝 پنل نمایندگی\n\n"
-            "با خرید یکی از پلن‌های نمایندگی، حجم و زمان مشخصی در اختیار شما قرار می‌گیرد. "
-            "می‌توانید از طریق پنل تحت وب (Mini App) در همان سقف حجم/زمان، به دلخواه خودتان "
-            "کانفیگ بسازید، آن‌ها را مدیریت (تمدید، تغییر حجم، غیرفعال‌سازی موقت یا حذف) کنید."
-        )
-        await _send_reseller_plans(message.answer)
-        return
-
-    now = int(time.time())
-    expired = bool(reseller["expires_at"]) and reseller["expires_at"] < now
-    disabled = reseller["status"] != "active"
-    used = await db.get_reseller_used_gb(reseller["id"])
-    remaining = max(0.0, reseller["quota_gb"] - used)
-
-    status_text = (
-        f"🤝 پنل نمایندگی شما\n\n"
-        f"📦 پلن: {reseller.get('plan_name') or '—'}\n"
-        f"📊 حجم کل: {reseller['quota_gb']} GB\n"
-        f"📈 حجم تخصیص‌یافته به کانفیگ‌ها: {used:.2f} GB\n"
-        f"📉 حجم باقیمانده: {remaining:.2f} GB\n"
-        f"⏱ انقضا: {_format_reseller_expiry(reseller['expires_at'])}\n"
-        f"وضعیت: "
-    )
-    if disabled:
-        status_text += "🚫 غیرفعال‌شده توسط ادمین\n\n⚠️ برای اطلاعات بیشتر با پشتیبانی تماس بگیرید."
-    elif expired:
-        status_text += "⛔️ منقضی شده\n\n⚠️ مهلت پلن نمایندگی شما تمام شده و پنل تحت وب قفل شده. برای ادامه، پلن را تمدید کنید."
-    else:
-        status_text += "✅ فعال"
-
-    await message.answer(
-        status_text,
-        reply_markup=reseller_status_inline(_reseller_panel_url(), expired or disabled),
-    )
-
-
-@router.callback_query(F.data == "res_renew_start")
-async def reseller_renew_start(callback: CallbackQuery):
-    await _send_reseller_plans(callback.message.answer)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "res_back_plans")
-async def reseller_back_to_plans(callback: CallbackQuery):
-    db = get_db()
-    plans = await db.get_reseller_plans(active_only=True)
-    if not plans:
-        await callback.answer("❌ پلنی وجود ندارد", show_alert=True)
-        return
-    await callback.message.edit_text(
-        "🤝 پلن‌های نمایندگی موجود:\nیک پلن را انتخاب کنید:",
-        reply_markup=reseller_plans_inline(plans),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("res_plan:"))
-async def reseller_plan_preview(callback: CallbackQuery, db_user: dict):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    plan = await db.get_reseller_plan(plan_id)
-    if not plan:
-        await callback.answer("پلن پیدا نشد", show_alert=True)
-        return
-
-    reseller = await db.get_reseller_by_user(db_user["id"])
-    renew = bool(reseller)
-
-    text = (
-        f"🤝 {plan['name']}\n"
-        f"📊 حجم: {plan['volume_gb']} GB\n"
-        f"⏱ مدت: {plan['duration_days']} روز\n"
-        f"💰 قیمت: {plan['price']:,} تومان\n"
-        f"📡 پنل: {plan['panel_name']}\n"
-    )
-    if plan.get("description"):
-        text += f"\n📝 {plan['description']}"
-    if renew:
-        text += (
-            "\n\n⚠️ توجه: با تأیید این پلن، حجم و زمان پنل نمایندگی فعلی شما با این پلن "
-            "جایگزین می‌شود (جمع نمی‌شود)."
-        )
-    await callback.message.edit_text(text, reply_markup=reseller_confirm_inline(plan_id, renew=renew))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("res_confirm:"))
-async def reseller_confirm(callback: CallbackQuery, db_user: dict):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    plan = await db.get_reseller_plan(plan_id)
-    if not plan:
-        await callback.answer("پلن پیدا نشد", show_alert=True)
-        return
-
-    fresh_user = await db._fetchone("SELECT * FROM users WHERE id = ?", (db_user["id"],))
-    balance = fresh_user["balance"] if fresh_user else db_user["balance"]
-
-    existing_reseller = await db.get_reseller_by_user(db_user["id"])
-    if existing_reseller and existing_reseller["panel_id"] != plan["panel_id"]:
-        configs_count = await db.get_reseller_configs_count(existing_reseller["id"])
-        if configs_count > 0:
-            await callback.answer(
-                "❌ این پلن روی پنل دیگری است. ابتدا کانفیگ‌های فعلی خود را حذف کنید یا "
-                "پلنی از همان پنل قبلی انتخاب کنید.",
-                show_alert=True,
-            )
-            return
-
-    if balance < plan["price"]:
-        deficit = plan["price"] - balance
-        await callback.message.edit_text(
-            f"❌ موجودی کیف پول کافی نیست.\nموجودی شما: {balance:,} تومان\n"
-            f"مبلغ مورد نیاز: {plan['price']:,} تومان\nمبلغ کسری: {deficit:,} تومان",
-            reply_markup=reseller_insufficient_balance_inline(plan_id),
-        )
-        await callback.answer()
-        return
-
-    now = int(time.time())
-    expires_at = now + plan["duration_days"] * 86400
-    await db.update_user_balance(db_user["id"], -plan["price"])
-    await db.create_or_renew_reseller(
-        db_user["id"], plan_id, plan["panel_id"], plan["volume_gb"], expires_at,
-    )
-    await db.create_order(
-        db_user["id"], None, plan["price"], "balance",
-        f"خرید/تمدید نمایندگی: {plan['name']}",
-    )
-
-    text = (
-        f"✅ پلن نمایندگی «{plan['name']}» با موفقیت فعال شد!\n\n"
-        f"📊 حجم: {plan['volume_gb']} GB\n"
-        f"⏱ مدت: {plan['duration_days']} روز\n"
-        f"⏰ انقضا: {_format_reseller_expiry(expires_at)}\n\n"
-        f"از دکمه زیر برای باز کردن پنل نمایندگی خود استفاده کنید 👇"
-    )
-    await callback.message.edit_text(text, reply_markup=reseller_status_inline(_reseller_panel_url(), False))
-    await callback.answer("✅ فعال شد.")
-
-
-@router.callback_query(F.data.startswith("res_topup:"))
-async def reseller_card_topup_start(callback: CallbackQuery, db_user: dict):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    plan = await db.get_reseller_plan(plan_id)
-    if not plan:
-        await callback.answer("پلن پیدا نشد", show_alert=True)
-        return
-
-    fresh_user = await db._fetchone("SELECT * FROM users WHERE id = ?", (db_user["id"],))
-    balance = fresh_user["balance"] if fresh_user else db_user["balance"]
-    deficit = plan["price"] - balance
-    if deficit <= 0:
-        await callback.answer("موجودی شما کافی است، دوباره روی تأیید بزنید.", show_alert=True)
-        return
-
-    settings = get_settings()
-    card = settings.card_number or await db.get_setting("card_number", "")
-    if not card:
-        await callback.answer("❌ شماره کارت تنظیم نشده. با ادمین تماس بگیرید.", show_alert=True)
-        return
-
-    await _send_card_payment_instructions(
-        callback.message.answer, db, db_user["id"], deficit, reseller_plan_id=plan_id,
-    )
-    await callback.answer()
 
 
 @router.message(F.text == t("support"))

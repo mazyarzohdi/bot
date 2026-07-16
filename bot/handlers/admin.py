@@ -4,8 +4,6 @@ import asyncio
 import html
 import json
 import logging
-import time
-from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -31,11 +29,10 @@ from bot.keyboards import (
     product_edit_menu_inline,
     products_admin_inline,
     renew_complete_inline,
-    reseller_admin_detail_inline,
+    reseller_admin_actions_inline,
     reseller_complete_inline,
     reseller_plan_actions_inline,
     reseller_plan_delete_confirm_inline,
-    reseller_plan_edit_menu_inline,
     reseller_plans_admin_inline,
     resellers_admin_inline,
     user_admin_card_inline,
@@ -86,6 +83,13 @@ class AdminProductEditForm(StatesGroup):
     value = State()
 
 
+class AdminResellerPlanForm(StatesGroup):
+    name = State()
+    volume_gb = State()
+    duration_days = State()
+    price = State()
+
+
 class AdminChannelForm(StatesGroup):
     channel_id = State()
     invite_link = State()
@@ -128,18 +132,6 @@ class AdminUserSearchForm(StatesGroup):
 
 class AdminSettingsForm(StatesGroup):
     key = State()
-    value = State()
-
-
-class AdminResellerPlanForm(StatesGroup):
-    name = State()
-    panel_id = State()
-    volume_gb = State()
-    duration_days = State()
-    price = State()
-
-
-class AdminResellerPlanEditForm(StatesGroup):
     value = State()
 
 
@@ -855,6 +847,262 @@ async def edit_product_field_save(message: Message, state: FSMContext):
     )
 
 
+# --- Reseller plans ---
+@router.message(F.text == t("admin_reseller_plans"))
+async def admin_reseller_plans(message: Message):
+    if message.from_user.id not in get_settings().admin_ids:
+        return
+    db = get_db()
+    plans = await db.get_reseller_plans(active_only=False)
+    await message.answer("🤝 پلن‌های نمایندگی:", reply_markup=reseller_plans_admin_inline(plans))
+
+
+@router.callback_query(F.data == "admin_resplans_back")
+async def admin_resplans_back(callback: CallbackQuery):
+    db = get_db()
+    plans = await db.get_reseller_plans(active_only=False)
+    await callback.message.edit_text("🤝 پلن‌های نمایندگی:", reply_markup=reseller_plans_admin_inline(plans))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "add_resplan")
+async def add_resplan_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminResellerPlanForm.name)
+    await callback.message.answer("📝 نام پلن نمایندگی:", reply_markup=cancel_kb())
+    await callback.answer()
+
+
+@router.message(AdminResellerPlanForm.name)
+async def add_resplan_name(message: Message, state: FSMContext):
+    if message.text == t("cancel"):
+        await state.clear()
+        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
+        return
+    await state.update_data(name=message.text.strip())
+    await state.set_state(AdminResellerPlanForm.volume_gb)
+    await message.answer("📊 حجم کل پنل نمایندگی (GB):")
+
+
+@router.message(AdminResellerPlanForm.volume_gb)
+async def add_resplan_volume(message: Message, state: FSMContext):
+    if message.text == t("cancel"):
+        await state.clear()
+        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
+        return
+    vol = parse_positive_float(message.text)
+    if not vol:
+        await message.answer("❌ مقدار نامعتبر")
+        return
+    await state.update_data(volume_gb=vol)
+    await state.set_state(AdminResellerPlanForm.duration_days)
+    await message.answer("⏱ مدت اعتبار پنل نمایندگی (روز):")
+
+
+@router.message(AdminResellerPlanForm.duration_days)
+async def add_resplan_days(message: Message, state: FSMContext):
+    if message.text == t("cancel"):
+        await state.clear()
+        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
+        return
+    days = parse_positive_int(message.text)
+    if not days:
+        await message.answer("❌ مقدار نامعتبر")
+        return
+    await state.update_data(duration_days=days)
+    await state.set_state(AdminResellerPlanForm.price)
+    await message.answer("💰 قیمت (تومان):")
+
+
+@router.message(AdminResellerPlanForm.price)
+async def add_resplan_price(message: Message, state: FSMContext):
+    if message.text == t("cancel"):
+        await state.clear()
+        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
+        return
+    price = parse_positive_int(message.text)
+    if not price:
+        await message.answer("❌ مقدار نامعتبر")
+        return
+    data = await state.get_data()
+    db = get_db()
+    plan_id = await db.add_reseller_plan(data["name"], data["volume_gb"], data["duration_days"], price)
+    await state.clear()
+    await message.answer(f"✅ پلن نمایندگی اضافه شد.\nID: {plan_id}", reply_markup=admin_menu())
+
+
+def _reseller_plan_detail_text(plan: dict) -> str:
+    return (
+        f"🤝 {plan['name']}\n"
+        f"📊 {plan['volume_gb']:g} GB / {plan['duration_days']} روز\n"
+        f"💰 {plan['price']:,} تومان\n"
+        f"وضعیت: {'✅ فعال' if plan.get('is_active') else '🚫 غیرفعال'}"
+    )
+
+
+@router.callback_query(F.data.startswith("resplan_admin:"))
+async def resplan_admin_detail(callback: CallbackQuery):
+    plan_id = int(callback.data.split(":")[1])
+    db = get_db()
+    plan = await db.get_reseller_plan(plan_id)
+    if not plan:
+        await callback.answer("پیدا نشد", show_alert=True)
+        return
+    await callback.message.edit_text(_reseller_plan_detail_text(plan), reply_markup=reseller_plan_actions_inline(plan))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("resplan_en:"))
+async def resplan_enable(callback: CallbackQuery):
+    plan_id = int(callback.data.split(":")[1])
+    db = get_db()
+    await db.update_reseller_plan(plan_id, is_active=1)
+    plan = await db.get_reseller_plan(plan_id)
+    await callback.message.edit_text(_reseller_plan_detail_text(plan), reply_markup=reseller_plan_actions_inline(plan))
+    await callback.answer("✅ فعال شد.")
+
+
+@router.callback_query(F.data.startswith("resplan_dis:"))
+async def resplan_disable(callback: CallbackQuery):
+    plan_id = int(callback.data.split(":")[1])
+    db = get_db()
+    await db.update_reseller_plan(plan_id, is_active=0)
+    plan = await db.get_reseller_plan(plan_id)
+    await callback.message.edit_text(_reseller_plan_detail_text(plan), reply_markup=reseller_plan_actions_inline(plan))
+    await callback.answer("🚫 غیرفعال شد.")
+
+
+@router.callback_query(F.data.startswith("resplan_del:"))
+async def resplan_delete_confirm(callback: CallbackQuery):
+    plan_id = int(callback.data.split(":")[1])
+    await callback.message.edit_text(
+        "⚠️ آیا از حذف کامل این پلن نمایندگی مطمئن هستید؟ (نمایندگانی که قبلاً این پلن را خریده‌اند تحت تأثیر قرار نمی‌گیرند.)",
+        reply_markup=reseller_plan_delete_confirm_inline(plan_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("resplan_del_yes:"))
+async def resplan_delete_yes(callback: CallbackQuery):
+    plan_id = int(callback.data.split(":")[1])
+    db = get_db()
+    await db.delete_reseller_plan(plan_id)
+    plans = await db.get_reseller_plans(active_only=False)
+    await callback.message.edit_text("✅ حذف شد.\n\n🤝 پلن‌های نمایندگی:", reply_markup=reseller_plans_admin_inline(plans))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("resplan_del_no:"))
+async def resplan_delete_no(callback: CallbackQuery):
+    plan_id = int(callback.data.split(":")[1])
+    db = get_db()
+    plan = await db.get_reseller_plan(plan_id)
+    await callback.message.edit_text(_reseller_plan_detail_text(plan), reply_markup=reseller_plan_actions_inline(plan))
+    await callback.answer()
+
+
+# --- Resellers ---
+@router.message(F.text == t("admin_resellers"))
+async def admin_resellers(message: Message):
+    if message.from_user.id not in get_settings().admin_ids:
+        return
+    db = get_db()
+    resellers = await db.get_all_resellers()
+    if not resellers:
+        await message.answer("🧑‍💼 هنوز هیچ نماینده‌ای ثبت نشده است.")
+        return
+    await message.answer("🧑‍💼 نمایندگان:", reply_markup=resellers_admin_inline(resellers))
+
+
+@router.callback_query(F.data == "admin_resellers_back")
+async def admin_resellers_back(callback: CallbackQuery):
+    db = get_db()
+    resellers = await db.get_all_resellers()
+    await callback.message.edit_text("🧑‍💼 نمایندگان:", reply_markup=resellers_admin_inline(resellers))
+    await callback.answer()
+
+
+def _reseller_admin_detail_text(reseller: dict, used_gb: float, configs_count: int) -> str:
+    remaining_gb = max(0, reseller["total_volume_gb"] - used_gb)
+    status_label = {"active": "✅ فعال", "expired": "⏰ منقضی‌شده", "disabled": "🚫 غیرفعال"}.get(
+        reseller["status"], reseller["status"]
+    )
+    label = reseller.get("full_name") or reseller.get("username") or f"کاربر {reseller['telegram_id']}"
+    return (
+        f"🧑‍💼 نماینده: {label}\n"
+        f"آیدی تلگرام: {reseller['telegram_id']}\n"
+        f"پلن: {reseller.get('plan_name') or '—'}\n"
+        f"وضعیت: {status_label}\n"
+        f"حجم کل: {reseller['total_volume_gb']:g} GB\n"
+        f"حجم مصرف‌شده: {used_gb:g} GB\n"
+        f"حجم باقی‌مانده: {remaining_gb:g} GB\n"
+        f"تعداد کانفیگ: {configs_count}\n"
+        f"انقضا: {reseller['expires_at'] or '—'}"
+    )
+
+
+@router.callback_query(F.data.startswith("resadm:"))
+async def resadm_detail(callback: CallbackQuery):
+    reseller_id = int(callback.data.split(":")[1])
+    db = get_db()
+    reseller = await db.get_reseller(reseller_id)
+    if not reseller:
+        await callback.answer("پیدا نشد", show_alert=True)
+        return
+    used_gb = await db.get_reseller_configs_volume_used(reseller_id)
+    configs = await db.get_reseller_configs(reseller_id)
+    await callback.message.edit_text(
+        _reseller_admin_detail_text(reseller, used_gb, len(configs)),
+        reply_markup=reseller_admin_actions_inline(reseller),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("resadm_dis:"))
+async def resadm_disable(callback: CallbackQuery):
+    reseller_id = int(callback.data.split(":")[1])
+    db = get_db()
+    await db.set_reseller_status(reseller_id, "disabled")
+    reseller = await db.get_reseller(reseller_id)
+    if reseller and reseller.get("telegram_id"):
+        try:
+            await callback.bot.send_message(
+                reseller["telegram_id"],
+                "🚫 حساب نمایندگی شما توسط ادمین غیرفعال شد و پنل تحت وب نمایندگی‌تان قفل شده است.",
+            )
+        except Exception:
+            pass
+    used_gb = await db.get_reseller_configs_volume_used(reseller_id)
+    configs = await db.get_reseller_configs(reseller_id)
+    await callback.message.edit_text(
+        _reseller_admin_detail_text(reseller, used_gb, len(configs)),
+        reply_markup=reseller_admin_actions_inline(reseller),
+    )
+    await callback.answer("🚫 غیرفعال شد.")
+
+
+@router.callback_query(F.data.startswith("resadm_en:"))
+async def resadm_enable(callback: CallbackQuery):
+    reseller_id = int(callback.data.split(":")[1])
+    db = get_db()
+    await db.set_reseller_status(reseller_id, "active")
+    reseller = await db.get_reseller(reseller_id)
+    if reseller and reseller.get("telegram_id"):
+        try:
+            await callback.bot.send_message(
+                reseller["telegram_id"],
+                "✅ حساب نمایندگی شما توسط ادمین دوباره فعال شد.",
+            )
+        except Exception:
+            pass
+    used_gb = await db.get_reseller_configs_volume_used(reseller_id)
+    configs = await db.get_reseller_configs(reseller_id)
+    await callback.message.edit_text(
+        _reseller_admin_detail_text(reseller, used_gb, len(configs)),
+        reply_markup=reseller_admin_actions_inline(reseller),
+    )
+    await callback.answer("✅ فعال شد.")
+
+
 # --- Payments ---
 @router.message(F.text == t("admin_payments"))
 async def admin_payments(message: Message):
@@ -943,16 +1191,16 @@ async def pay_confirm(callback: CallbackQuery, is_admin: bool):
         if payment.get("renew_sub_id"):
             text += f"\n\nحالا می‌توانید تمدید سرویس #{payment['renew_sub_id']} را تکمیل کنید 👇"
             markup = renew_complete_inline(payment["renew_sub_id"])
-        elif payment.get("reseller_plan_id"):
-            plan = await db.get_reseller_plan(payment["reseller_plan_id"])
-            if plan:
-                text += f"\n\nحالا می‌توانید خرید/تمدید نمایندگی «{plan['name']}» را تکمیل کنید 👇"
-                markup = reseller_complete_inline(payment["reseller_plan_id"])
         elif payment.get("product_id"):
             product = await db.get_product(payment["product_id"])
             if product:
                 text += f"\n\nحالا می‌توانید خرید «{product['name']}» را تکمیل کنید 👇"
                 markup = complete_purchase_inline(payment["product_id"])
+        elif payment.get("reseller_plan_id"):
+            plan = await db.get_reseller_plan(payment["reseller_plan_id"])
+            if plan:
+                text += f"\n\nحالا می‌توانید خرید پلن نمایندگی «{plan['name']}» را تکمیل کنید 👇"
+                markup = reseller_complete_inline(payment["reseller_plan_id"])
         try:
             await callback.bot.send_message(user["telegram_id"], text, reply_markup=markup)
         except Exception:
@@ -2110,403 +2358,3 @@ async def adm_coup_delete(callback: CallbackQuery):
         reply_markup=admin_coupons_inline(coupons),
     )
     await callback.answer("✅ حذف شد.")
-
-
-# ═══════════════════════════ Reseller management ═══════════════════════════
-# پلن‌های نمایندگی (مدیریت مثل محصولات) + بررسی نمایندگان فعلی
-
-@router.message(F.text == t("admin_reseller"))
-async def admin_reseller_menu(message: Message):
-    if message.from_user.id not in get_settings().admin_ids:
-        return
-    db = get_db()
-    plans = await db.get_reseller_plans(active_only=False)
-    await message.answer(
-        "🤝 مدیریت نمایندگی\n\nپلن‌های نمایندگی:",
-        reply_markup=reseller_plans_admin_inline(plans),
-    )
-
-
-@router.callback_query(F.data == "admin_resplans_back")
-async def admin_resplans_back(callback: CallbackQuery):
-    db = get_db()
-    plans = await db.get_reseller_plans(active_only=False)
-    await callback.message.edit_text(
-        "🤝 مدیریت نمایندگی\n\nپلن‌های نمایندگی:",
-        reply_markup=reseller_plans_admin_inline(plans),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "add_resplan")
-async def add_resplan_start(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(AdminResellerPlanForm.name)
-    await callback.message.answer("📝 نام پلن نمایندگی:", reply_markup=cancel_kb())
-    await callback.answer()
-
-
-@router.message(AdminResellerPlanForm.name)
-async def add_resplan_name(message: Message, state: FSMContext):
-    if message.text == t("cancel"):
-        await state.clear()
-        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
-        return
-    await state.update_data(name=message.text.strip())
-    db = get_db()
-    panels = await db.get_panels()
-    if not panels:
-        await state.clear()
-        await message.answer("❌ ابتدا یک پنل اضافه کنید.", reply_markup=admin_menu())
-        return
-    lines = "\n".join(f"{p['id']}: {p['name']}" for p in panels)
-    await state.set_state(AdminResellerPlanForm.panel_id)
-    await message.answer(f"🖥 ID پنل را انتخاب کنید:\n{lines}")
-
-
-@router.message(AdminResellerPlanForm.panel_id)
-async def add_resplan_panel(message: Message, state: FSMContext):
-    if message.text == t("cancel"):
-        await state.clear()
-        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
-        return
-    pid = parse_positive_int(message.text)
-    if not pid:
-        await message.answer("❌ ID نامعتبر")
-        return
-    await state.update_data(panel_id=pid)
-    await state.set_state(AdminResellerPlanForm.volume_gb)
-    await message.answer("📊 حجم کل نمایندگی (GB):")
-
-
-@router.message(AdminResellerPlanForm.volume_gb)
-async def add_resplan_volume(message: Message, state: FSMContext):
-    if message.text == t("cancel"):
-        await state.clear()
-        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
-        return
-    vol = parse_positive_float(message.text)
-    if not vol:
-        await message.answer("❌ مقدار نامعتبر")
-        return
-    await state.update_data(volume_gb=vol)
-    await state.set_state(AdminResellerPlanForm.duration_days)
-    await message.answer("⏱ مدت اعتبار نمایندگی (روز):")
-
-
-@router.message(AdminResellerPlanForm.duration_days)
-async def add_resplan_days(message: Message, state: FSMContext):
-    if message.text == t("cancel"):
-        await state.clear()
-        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
-        return
-    days = parse_positive_int(message.text)
-    if not days:
-        await message.answer("❌ مقدار نامعتبر")
-        return
-    await state.update_data(duration_days=days)
-    await state.set_state(AdminResellerPlanForm.price)
-    await message.answer("💰 قیمت (تومان):")
-
-
-@router.message(AdminResellerPlanForm.price)
-async def add_resplan_price(message: Message, state: FSMContext):
-    if message.text == t("cancel"):
-        await state.clear()
-        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
-        return
-    price = parse_positive_int(message.text)
-    if not price:
-        await message.answer("❌ مقدار نامعتبر")
-        return
-    data = await state.get_data()
-    db = get_db()
-    pid = await db.add_reseller_plan(
-        data["name"], data["panel_id"], data["volume_gb"], data["duration_days"], price,
-    )
-    await state.clear()
-    await message.answer(f"✅ پلن نمایندگی با موفقیت اضافه شد.\nID: {pid}", reply_markup=admin_menu())
-
-
-def _resplan_detail_text(plan: dict) -> str:
-    return (
-        f"🤝 {plan['name']}\n"
-        f"📊 {plan['volume_gb']} GB / {plan['duration_days']} روز\n"
-        f"💰 {plan['price']:,} تومان\n"
-        f"📡 {plan.get('panel_name', '')}\n"
-        f"وضعیت: {'✅ فعال' if plan.get('is_active') else '🚫 غیرفعال'}"
-    )
-
-
-@router.callback_query(F.data.startswith("resplan:"))
-async def resplan_detail(callback: CallbackQuery):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    plan = await db.get_reseller_plan(plan_id)
-    if not plan:
-        await callback.answer("پیدا نشد", show_alert=True)
-        return
-    await callback.message.edit_text(
-        _resplan_detail_text(plan), reply_markup=reseller_plan_actions_inline(plan),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("resplan_en:"))
-async def resplan_enable(callback: CallbackQuery):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    await db.update_reseller_plan(plan_id, is_active=1)
-    plan = await db.get_reseller_plan(plan_id)
-    await callback.message.edit_text(
-        _resplan_detail_text(plan), reply_markup=reseller_plan_actions_inline(plan),
-    )
-    await callback.answer("✅ پلن فعال شد.")
-
-
-@router.callback_query(F.data.startswith("resplan_dis:"))
-async def resplan_disable(callback: CallbackQuery):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    await db.update_reseller_plan(plan_id, is_active=0)
-    plan = await db.get_reseller_plan(plan_id)
-    await callback.message.edit_text(
-        _resplan_detail_text(plan), reply_markup=reseller_plan_actions_inline(plan),
-    )
-    await callback.answer("🚫 پلن غیرفعال شد.")
-
-
-@router.callback_query(F.data.startswith("resplan_del_yes:"))
-async def resplan_delete_confirmed(callback: CallbackQuery):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    try:
-        await db.delete_reseller_plan(plan_id)
-    except Exception:
-        await callback.answer(
-            "❌ این پلن توسط نماینده‌ای استفاده شده و قابل حذف کامل نیست. "
-            "می‌توانید به جای آن آن را غیرفعال کنید.",
-            show_alert=True,
-        )
-        return
-    plans = await db.get_reseller_plans(active_only=False)
-    await callback.message.edit_text(
-        "✅ پلن حذف شد.\n\n🤝 پلن‌های نمایندگی:", reply_markup=reseller_plans_admin_inline(plans),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("resplan_del_no:"))
-async def resplan_delete_cancelled(callback: CallbackQuery):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    plan = await db.get_reseller_plan(plan_id)
-    if not plan:
-        await callback.answer("پیدا نشد", show_alert=True)
-        return
-    await callback.message.edit_text(
-        _resplan_detail_text(plan), reply_markup=reseller_plan_actions_inline(plan),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("resplan_del:"))
-async def resplan_delete_ask(callback: CallbackQuery):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    plan = await db.get_reseller_plan(plan_id)
-    if not plan:
-        await callback.answer("پیدا نشد", show_alert=True)
-        return
-    await callback.message.edit_text(
-        f"⚠️ آیا از حذف کامل پلن «{plan['name']}» مطمئن هستید؟\nاین عملیات قابل بازگشت نیست.",
-        reply_markup=reseller_plan_delete_confirm_inline(plan_id),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("resplan_edit:"))
-async def resplan_edit_menu(callback: CallbackQuery):
-    plan_id = int(callback.data.split(":")[1])
-    db = get_db()
-    plan = await db.get_reseller_plan(plan_id)
-    if not plan:
-        await callback.answer("پیدا نشد", show_alert=True)
-        return
-    await callback.message.edit_text(
-        f"✏️ ویرایش پلن «{plan['name']}»\nکدام فیلد را می‌خواهید ویرایش کنید؟",
-        reply_markup=reseller_plan_edit_menu_inline(plan_id),
-    )
-    await callback.answer()
-
-
-_RESPLAN_EDIT_FIELD_PROMPTS = {
-    "name": "📝 نام جدید را وارد کنید:",
-    "volume_gb": "📊 حجم جدید را به GB وارد کنید:",
-    "duration_days": "⏱ مدت جدید را به روز وارد کنید:",
-    "price": "💰 قیمت جدید را به تومان وارد کنید:",
-    "description": "📝 توضیحات جدید را وارد کنید:",
-    "panel_id": "🖥 ID پنل جدید را وارد کنید (از لیست پنل‌ها):",
-}
-
-
-@router.callback_query(F.data.startswith("resplan_editf:"))
-async def resplan_edit_field_start(callback: CallbackQuery, state: FSMContext):
-    _, plan_id, field = callback.data.split(":")
-    plan_id = int(plan_id)
-    db = get_db()
-    plan = await db.get_reseller_plan(plan_id)
-    if not plan:
-        await callback.answer("پیدا نشد", show_alert=True)
-        return
-
-    prompt = _RESPLAN_EDIT_FIELD_PROMPTS.get(field)
-    if not prompt:
-        await callback.answer("نامعتبر", show_alert=True)
-        return
-
-    if field == "panel_id":
-        panels = await db.get_panels()
-        lines = "\n".join(f"{p['id']}: {p['name']}" for p in panels)
-        prompt = f"{prompt}\n{lines}"
-
-    await state.update_data(plan_id=plan_id, field=field)
-    await state.set_state(AdminResellerPlanEditForm.value)
-    await callback.message.answer(prompt, reply_markup=cancel_kb())
-    await callback.answer()
-
-
-@router.message(AdminResellerPlanEditForm.value)
-async def resplan_edit_field_save(message: Message, state: FSMContext):
-    if message.text == t("cancel"):
-        await state.clear()
-        await message.answer(t("operation_cancelled"), reply_markup=admin_menu())
-        return
-
-    data = await state.get_data()
-    plan_id = data["plan_id"]
-    field = data["field"]
-    raw = (message.text or "").strip()
-
-    if field == "volume_gb":
-        value = parse_positive_float(raw)
-        if value is None:
-            await message.answer("❌ مقدار نامعتبر. دوباره وارد کنید:")
-            return
-    elif field in ("duration_days", "price", "panel_id"):
-        value = parse_positive_int(raw)
-        if value is None:
-            await message.answer("❌ مقدار نامعتبر. دوباره وارد کنید:")
-            return
-    else:
-        if not raw:
-            await message.answer("❌ مقدار نمی‌تواند خالی باشد. دوباره وارد کنید:")
-            return
-        value = raw
-
-    db = get_db()
-    if field == "panel_id":
-        panel = await db.get_panel(value)
-        if not panel:
-            await message.answer("❌ پنلی با این ID پیدا نشد. دوباره وارد کنید:")
-            return
-
-    await db.update_reseller_plan(plan_id, **{field: value})
-    await state.clear()
-    plan = await db.get_reseller_plan(plan_id)
-    await message.answer("✅ پلن بروزرسانی شد.", reply_markup=admin_menu())
-    await message.answer(_resplan_detail_text(plan), reply_markup=reseller_plan_actions_inline(plan))
-
-
-# --- بررسی نمایندگان توسط ادمین‌های اصلی ---
-
-@router.callback_query(F.data == "resellers_list")
-async def resellers_list(callback: CallbackQuery):
-    db = get_db()
-    resellers = await db.get_all_resellers()
-    if not resellers:
-        await callback.answer("📭 هنوز هیچ نماینده‌ای وجود ندارد.", show_alert=True)
-        return
-    await callback.message.edit_text(
-        f"📋 لیست نمایندگان (تعداد: {len(resellers)})",
-        reply_markup=resellers_admin_inline(resellers),
-    )
-    await callback.answer()
-
-
-async def _reseller_detail_text(db, reseller: dict) -> str:
-    now = int(time.time())
-    expired = bool(reseller["expires_at"]) and reseller["expires_at"] < now
-    used = await db.get_reseller_used_gb(reseller["id"])
-    configs_count = await db.get_reseller_configs_count(reseller["id"])
-    uname = f"@{reseller['username']}" if reseller.get("username") else "—"
-
-    if reseller["expires_at"]:
-        exp_text = "منقضی‌شده" if expired else datetime.fromtimestamp(reseller["expires_at"]).strftime("%Y-%m-%d %H:%M")
-    else:
-        exp_text = "نامحدود"
-
-    status = "🚫 غیرفعال‌شده توسط ادمین" if reseller["status"] != "active" else ("⛔️ منقضی شده" if expired else "✅ فعال")
-
-    return (
-        f"🤝 نماینده #{reseller['id']}\n"
-        f"👤 {reseller.get('full_name') or uname} | {uname} | {reseller['telegram_id']}\n"
-        f"📦 پلن: {reseller.get('plan_name') or '—'}\n"
-        f"📊 حجم کل: {reseller['quota_gb']} GB\n"
-        f"📈 حجم تخصیص‌یافته: {used:.2f} GB\n"
-        f"📉 حجم باقیمانده: {max(0, reseller['quota_gb'] - used):.2f} GB\n"
-        f"🧾 تعداد کانفیگ‌ها: {configs_count}\n"
-        f"⏱ انقضا: {exp_text}\n"
-        f"وضعیت: {status}"
-    )
-
-
-@router.callback_query(F.data.startswith("resv:"))
-async def reseller_detail(callback: CallbackQuery):
-    reseller_id = int(callback.data.split(":")[1])
-    db = get_db()
-    reseller = await db.get_reseller(reseller_id)
-    if not reseller:
-        await callback.answer("پیدا نشد", show_alert=True)
-        return
-    text = await _reseller_detail_text(db, reseller)
-    await callback.message.edit_text(text, reply_markup=reseller_admin_detail_inline(reseller))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("resv_dis:"))
-async def reseller_disable(callback: CallbackQuery):
-    reseller_id = int(callback.data.split(":")[1])
-    db = get_db()
-    await db.set_reseller_status(reseller_id, "disabled")
-    reseller = await db.get_reseller(reseller_id)
-    if reseller and reseller.get("telegram_id"):
-        try:
-            await callback.bot.send_message(
-                reseller["telegram_id"],
-                "🚫 حساب نمایندگی شما توسط ادمین غیرفعال شد. پنل تحت وب نمایندگی شما قفل شده است. "
-                "برای اطلاعات بیشتر با پشتیبانی تماس بگیرید.",
-            )
-        except Exception:
-            pass
-    text = await _reseller_detail_text(db, reseller)
-    await callback.message.edit_text(text, reply_markup=reseller_admin_detail_inline(reseller))
-    await callback.answer("🚫 حساب نماینده غیرفعال شد.")
-
-
-@router.callback_query(F.data.startswith("resv_en:"))
-async def reseller_enable(callback: CallbackQuery):
-    reseller_id = int(callback.data.split(":")[1])
-    db = get_db()
-    await db.set_reseller_status(reseller_id, "active")
-    reseller = await db.get_reseller(reseller_id)
-    if reseller and reseller.get("telegram_id"):
-        try:
-            await callback.bot.send_message(
-                reseller["telegram_id"],
-                "✅ حساب نمایندگی شما توسط ادمین دوباره فعال شد. اکنون می‌توانید از پنل تحت وب استفاده کنید.",
-            )
-        except Exception:
-            pass
-    text = await _reseller_detail_text(db, reseller)
-    await callback.message.edit_text(text, reply_markup=reseller_admin_detail_inline(reseller))
-    await callback.answer("✅ حساب نماینده فعال شد.")

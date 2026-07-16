@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 from pathlib import Path
@@ -233,6 +234,143 @@ class Database:
     async def delete_product(self, product_id: int):
         await self._execute("DELETE FROM products WHERE id = ?", (product_id,))
 
+    # --- Reseller plans ---
+    async def get_reseller_plans(self, active_only: bool = True) -> list[dict]:
+        query = "SELECT * FROM reseller_plans"
+        if active_only:
+            query += " WHERE is_active = 1"
+        query += " ORDER BY price"
+        return await self._fetchall(query)
+
+    async def get_reseller_plan(self, plan_id: int) -> dict | None:
+        return await self._fetchone("SELECT * FROM reseller_plans WHERE id = ?", (plan_id,))
+
+    async def add_reseller_plan(self, name: str, volume_gb: float, duration_days: int, price: int) -> int:
+        return await self._execute(
+            "INSERT INTO reseller_plans (name, volume_gb, duration_days, price) VALUES (?, ?, ?, ?)",
+            (name, volume_gb, duration_days, price),
+        )
+
+    async def update_reseller_plan(self, plan_id: int, **fields):
+        allowed = {"name", "volume_gb", "duration_days", "price", "is_active"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        cols = ", ".join(f"{k} = ?" for k in updates)
+        await self._execute(f"UPDATE reseller_plans SET {cols} WHERE id = ?", (*updates.values(), plan_id))
+
+    async def delete_reseller_plan(self, plan_id: int):
+        await self._execute("DELETE FROM reseller_plans WHERE id = ?", (plan_id,))
+
+    # --- Resellers ---
+    async def get_reseller_by_user(self, user_id: int) -> dict | None:
+        return await self._fetchone(
+            "SELECT r.*, u.telegram_id, u.full_name, u.username, rp.name as plan_name "
+            "FROM resellers r JOIN users u ON r.user_id = u.id "
+            "LEFT JOIN reseller_plans rp ON r.plan_id = rp.id "
+            "WHERE r.user_id = ?",
+            (user_id,),
+        )
+
+    async def get_reseller(self, reseller_id: int) -> dict | None:
+        return await self._fetchone(
+            "SELECT r.*, u.telegram_id, u.full_name, u.username, rp.name as plan_name "
+            "FROM resellers r JOIN users u ON r.user_id = u.id "
+            "LEFT JOIN reseller_plans rp ON r.plan_id = rp.id "
+            "WHERE r.id = ?",
+            (reseller_id,),
+        )
+
+    async def get_all_resellers(self) -> list[dict]:
+        return await self._fetchall(
+            "SELECT r.*, u.telegram_id, u.full_name, u.username, rp.name as plan_name "
+            "FROM resellers r JOIN users u ON r.user_id = u.id "
+            "LEFT JOIN reseller_plans rp ON r.plan_id = rp.id "
+            "ORDER BY r.id DESC"
+        )
+
+    async def create_or_extend_reseller(self, user_id: int, plan: dict) -> int:
+        """Grants (or renews/tops-up) a reseller account from a purchased
+        plan: volume is ADDED to whatever pool they already have, and the
+        expiry is extended from whichever is later — their current expiry
+        (if still active) or right now (if new/already expired) — so
+        renewing before expiry doesn't waste remaining time, matching how
+        product renewals work elsewhere in the bot."""
+        existing = await self.get_reseller_by_user(user_id)
+        conn = await self.connect()
+        try:
+            if existing:
+                base = None
+                if existing.get("expires_at") and existing["status"] == "active":
+                    try:
+                        base = datetime.strptime(existing["expires_at"], "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        base = None
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                if not base or base < now:
+                    base = now
+                new_expiry = (base + timedelta(days=plan["duration_days"])).strftime("%Y-%m-%d %H:%M:%S")
+                new_total = existing["total_volume_gb"] + plan["volume_gb"]
+                await conn.execute(
+                    "UPDATE resellers SET total_volume_gb = ?, expires_at = ?, plan_id = ?, status = 'active' "
+                    "WHERE id = ?",
+                    (new_total, new_expiry, plan["id"], existing["id"]),
+                )
+                await conn.commit()
+                return existing["id"]
+            else:
+                new_expiry = (
+                    datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=plan["duration_days"])
+                ).strftime("%Y-%m-%d %H:%M:%S")
+                cursor = await conn.execute(
+                    "INSERT INTO resellers (user_id, plan_id, total_volume_gb, expires_at, status) "
+                    "VALUES (?, ?, ?, ?, 'active')",
+                    (user_id, plan["id"], plan["volume_gb"], new_expiry),
+                )
+                await conn.commit()
+                return cursor.lastrowid
+        finally:
+            await conn.close()
+
+    async def set_reseller_status(self, reseller_id: int, status: str):
+        await self._execute("UPDATE resellers SET status = ? WHERE id = ?", (status, reseller_id))
+
+    async def expire_stale_resellers(self) -> list[dict]:
+        """Locks reseller accounts whose plan has run out, and returns the
+        rows that were just locked so the caller can notify each user."""
+        conn = await self.connect()
+        try:
+            cursor = await conn.execute(
+                "SELECT r.*, u.telegram_id FROM resellers r JOIN users u ON r.user_id = u.id "
+                "WHERE r.status = 'active' AND r.expires_at IS NOT NULL AND r.expires_at <= datetime('now')"
+            )
+            rows = [dict(row) for row in await cursor.fetchall()]
+            if rows:
+                await conn.execute(
+                    "UPDATE resellers SET status = 'expired' WHERE status = 'active' "
+                    "AND expires_at IS NOT NULL AND expires_at <= datetime('now')"
+                )
+                await conn.commit()
+            return rows
+        finally:
+            await conn.close()
+
+    async def get_reseller_configs_volume_used(self, reseller_id: int) -> float:
+        row = await self._fetchone(
+            "SELECT COALESCE(SUM(volume_gb), 0) as used FROM reseller_configs "
+            "WHERE reseller_id = ? AND status != 'deleted'",
+            (reseller_id,),
+        )
+        return row["used"] if row else 0
+
+    async def get_reseller_configs(self, reseller_id: int) -> list[dict]:
+        return await self._fetchall(
+            "SELECT rc.*, pn.name as panel_name FROM reseller_configs rc "
+            "JOIN panels pn ON rc.panel_id = pn.id "
+            "WHERE rc.reseller_id = ? AND rc.status != 'deleted' ORDER BY rc.id DESC",
+            (reseller_id,),
+        )
+
     # --- Subscriptions ---
     async def add_subscription(self, **data) -> int:
         return await self._execute(
@@ -364,8 +502,8 @@ class Database:
         reseller_plan_id: int | None = None,
     ) -> int:
         return await self._execute(
-            "INSERT INTO payments (user_id, order_id, product_id, renew_sub_id, reseller_plan_id, "
-            "amount, payment_method, receipt_file_id, expected_amount, expires_at) "
+            "INSERT INTO payments (user_id, order_id, product_id, renew_sub_id, reseller_plan_id, amount, "
+            "payment_method, receipt_file_id, expected_amount, expires_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (user_id, order_id, product_id, renew_sub_id, reseller_plan_id, amount, payment_method,
              receipt_file_id, expected_amount, expires_at),
@@ -616,181 +754,6 @@ class Database:
         else:
             discount = coupon["discount_value"]
         return min(discount, price)
-
-
-    # --- Reseller plans (defined by main admins) ---
-    async def get_reseller_plans(self, active_only: bool = True) -> list[dict]:
-        query = (
-            "SELECT rp.*, pn.name as panel_name FROM reseller_plans rp "
-            "JOIN panels pn ON rp.panel_id = pn.id"
-        )
-        if active_only:
-            query += " WHERE rp.is_active = 1"
-        query += " ORDER BY rp.price"
-        return await self._fetchall(query)
-
-    async def get_reseller_plan(self, plan_id: int) -> dict | None:
-        return await self._fetchone(
-            "SELECT rp.*, pn.name as panel_name, pn.url as panel_url, "
-            "pn.api_token, pn.inbound_ids, pn.on_hold "
-            "FROM reseller_plans rp JOIN panels pn ON rp.panel_id = pn.id "
-            "WHERE rp.id = ?",
-            (plan_id,),
-        )
-
-    async def add_reseller_plan(
-        self, name: str, panel_id: int, volume_gb: float,
-        duration_days: int, price: int, description: str = "",
-    ) -> int:
-        return await self._execute(
-            "INSERT INTO reseller_plans (name, panel_id, volume_gb, duration_days, price, description) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, panel_id, volume_gb, duration_days, price, description),
-        )
-
-    async def update_reseller_plan(self, plan_id: int, **fields):
-        allowed = {
-            "name", "panel_id", "volume_gb", "duration_days",
-            "price", "is_active", "description",
-        }
-        updates = {k: v for k, v in fields.items() if k in allowed}
-        if not updates:
-            return
-        cols = ", ".join(f"{k} = ?" for k in updates)
-        await self._execute(
-            f"UPDATE reseller_plans SET {cols} WHERE id = ?",
-            (*updates.values(), plan_id),
-        )
-
-    async def delete_reseller_plan(self, plan_id: int):
-        await self._execute("DELETE FROM reseller_plans WHERE id = ?", (plan_id,))
-
-    # --- Resellers ---
-    async def get_reseller_by_user(self, user_id: int) -> dict | None:
-        return await self._fetchone(
-            "SELECT r.*, pn.name as panel_name, pn.url as panel_url, pn.api_token, "
-            "pn.inbound_ids, pn.on_hold, pn.sub_link_template, rp.name as plan_name "
-            "FROM resellers r JOIN panels pn ON r.panel_id = pn.id "
-            "LEFT JOIN reseller_plans rp ON r.plan_id = rp.id "
-            "WHERE r.user_id = ?",
-            (user_id,),
-        )
-
-    async def get_reseller(self, reseller_id: int) -> dict | None:
-        return await self._fetchone(
-            "SELECT r.*, pn.name as panel_name, pn.url as panel_url, pn.api_token, "
-            "pn.inbound_ids, pn.on_hold, pn.sub_link_template, rp.name as plan_name, "
-            "u.telegram_id, u.username, u.full_name "
-            "FROM resellers r JOIN panels pn ON r.panel_id = pn.id "
-            "JOIN users u ON r.user_id = u.id "
-            "LEFT JOIN reseller_plans rp ON r.plan_id = rp.id "
-            "WHERE r.id = ?",
-            (reseller_id,),
-        )
-
-    async def get_all_resellers(self) -> list[dict]:
-        return await self._fetchall(
-            "SELECT r.*, u.telegram_id, u.username, u.full_name, rp.name as plan_name "
-            "FROM resellers r JOIN users u ON r.user_id = u.id "
-            "LEFT JOIN reseller_plans rp ON r.plan_id = rp.id "
-            "ORDER BY r.id DESC"
-        )
-
-    async def create_or_renew_reseller(
-        self, user_id: int, plan_id: int, panel_id: int,
-        quota_gb: float, expires_at: int,
-    ) -> int:
-        """درخواست خرید/تمدید پنل نمایندگی: اگه نماینده از قبل وجود داشته
-        باشه، حجم/زمان/پنل/وضعیتش ریست میشه (مثل تمدید سرویس عادی)، وگرنه
-        یک رکورد جدید ساخته میشه."""
-        existing = await self._fetchone(
-            "SELECT id FROM resellers WHERE user_id = ?", (user_id,)
-        )
-        if existing:
-            await self._execute(
-                "UPDATE resellers SET plan_id = ?, panel_id = ?, quota_gb = ?, "
-                "expires_at = ?, status = 'active' WHERE id = ?",
-                (plan_id, panel_id, quota_gb, expires_at, existing["id"]),
-            )
-            return existing["id"]
-        return await self._execute(
-            "INSERT INTO resellers (user_id, plan_id, panel_id, quota_gb, expires_at, status) "
-            "VALUES (?, ?, ?, ?, ?, 'active')",
-            (user_id, plan_id, panel_id, quota_gb, expires_at),
-        )
-
-    async def set_reseller_status(self, reseller_id: int, status: str):
-        await self._execute(
-            "UPDATE resellers SET status = ? WHERE id = ?", (status, reseller_id)
-        )
-
-    async def get_reseller_used_gb(self, reseller_id: int) -> float:
-        row = await self._fetchone(
-            "SELECT COALESCE(SUM(CASE WHEN status = 'deleted' THEN consumed_gb ELSE volume_gb END), 0) as used "
-            "FROM reseller_configs WHERE reseller_id = ?",
-            (reseller_id,),
-        )
-        return row["used"] if row else 0.0
-
-    async def get_reseller_configs(self, reseller_id: int, include_deleted: bool = False) -> list[dict]:
-        query = "SELECT * FROM reseller_configs WHERE reseller_id = ?"
-        if not include_deleted:
-            query += " AND status != 'deleted'"
-        query += " ORDER BY id DESC"
-        return await self._fetchall(query, (reseller_id,))
-
-    async def get_reseller_configs_count(self, reseller_id: int) -> int:
-        row = await self._fetchone(
-            "SELECT COUNT(*) as c FROM reseller_configs WHERE reseller_id = ? AND status != 'deleted'",
-            (reseller_id,),
-        )
-        return row["c"] if row else 0
-
-    async def get_reseller_config(self, config_id: int) -> dict | None:
-        return await self._fetchone(
-            "SELECT rc.*, r.user_id, r.panel_id, r.quota_gb, r.expires_at as reseller_expires_at, "
-            "r.status as reseller_status, pn.url as panel_url, pn.api_token, pn.inbound_ids, "
-            "pn.sub_link_template, pn.on_hold "
-            "FROM reseller_configs rc "
-            "JOIN resellers r ON rc.reseller_id = r.id "
-            "JOIN panels pn ON r.panel_id = pn.id "
-            "WHERE rc.id = ?",
-            (config_id,),
-        )
-
-    async def add_reseller_config(self, **data) -> int:
-        return await self._execute(
-            "INSERT INTO reseller_configs "
-            "(reseller_id, label, email, sub_id, volume_gb, expiry_time, "
-            "config_link, config_links, sub_link, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                data["reseller_id"],
-                data.get("label", ""),
-                data["email"],
-                data.get("sub_id", ""),
-                data["volume_gb"],
-                data.get("expiry_time", 0),
-                data.get("config_link", ""),
-                data.get("config_links", "[]"),
-                data.get("sub_link", ""),
-                data.get("status", "active"),
-            ),
-        )
-
-    async def update_reseller_config(self, config_id: int, **fields):
-        allowed = {
-            "label", "volume_gb", "expiry_time", "config_link",
-            "config_links", "sub_link", "status", "sub_id", "consumed_gb",
-        }
-        updates = {k: v for k, v in fields.items() if k in allowed}
-        if not updates:
-            return
-        cols = ", ".join(f"{k} = ?" for k in updates)
-        await self._execute(
-            f"UPDATE reseller_configs SET {cols} WHERE id = ?",
-            (*updates.values(), config_id),
-        )
 
 
 _db: Database | None = None

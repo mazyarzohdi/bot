@@ -54,6 +54,34 @@ async def _expire_payments_loop(bot: Bot, db):
         await asyncio.sleep(PAYMENT_EXPIRY_CHECK_INTERVAL_SECONDS)
 
 
+RESELLER_EXPIRY_CHECK_INTERVAL_SECONDS = 600  # reseller plans run for days, no need to poll every minute
+
+
+async def _expire_resellers_loop(bot: Bot, db):
+    """Locks a reseller's web panel access once their purchased plan's
+    duration has passed (e.g. a 60-day plan, 60 days after purchase),
+    and lets them know they need to renew — matching the requirement that
+    an expired reseller plan locks the panel rather than silently letting
+    it keep working."""
+    while True:
+        try:
+            expired = await db.expire_stale_resellers()
+            for reseller in expired:
+                if reseller.get("telegram_id"):
+                    try:
+                        await bot.send_message(
+                            reseller["telegram_id"],
+                            "⏰ مهلت پنل نمایندگی شما به پایان رسید و پنل تحت وب نمایندگی‌تان قفل شد.\n\n"
+                            "برای ادامه‌ی فعالیت، لطفاً از منوی «🤝 پنل نمایندگی» یکی از پلن‌ها را دوباره "
+                            "خریداری کنید — حجم و کانفیگ‌های قبلی شما حفظ می‌شود.",
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            logger.exception("Reseller expiry loop failed")
+        await asyncio.sleep(RESELLER_EXPIRY_CHECK_INTERVAL_SECONDS)
+
+
 async def main():
     settings = get_settings()
     if not settings.bot_token or settings.bot_token == "your_bot_token_here":
@@ -117,6 +145,7 @@ async def main():
 
     logger.info("Bot starting...")
     asyncio.create_task(_expire_payments_loop(bot, db))
+    asyncio.create_task(_expire_resellers_loop(bot, db))
     await dp.start_polling(bot)
 
 

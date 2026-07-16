@@ -1,0 +1,130 @@
+{% extends "shared/base.html" %}
+{% block title %}مدیریت کانفیگ{% endblock %}
+{% block page_title %}مدیریت کانفیگ{% endblock %}
+{% block nav_reseller %}active{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2 class="card-title"><i class="fa fa-key"></i> {{ config.label|default:config.email }}</h2>
+  <div class="detail-row"><span>پنل:</span>{{ config.panel_name }}</div>
+  <div class="detail-row"><span>حجم:</span><strong>{{ config.volume_gb|floatformat:0 }} GB</strong></div>
+  <div class="detail-row"><span>وضعیت:</span>
+    {% if config.status == 'active' %}<span class="badge-green">فعال</span>
+    {% else %}<span class="badge-red">غیرفعال</span>{% endif %}
+  </div>
+</div>
+
+<div class="card mt-3">
+  <h2 class="card-title"><i class="fa fa-link"></i> لینک‌ها</h2>
+  {% if config.sub_link %}
+  <div class="form-group">
+    <label>لینک سابسکریپشن</label>
+    <div class="input-group">
+      <input type="text" class="input" readonly value="{{ config.sub_link }}" id="sublink-field"/>
+      <button type="button" class="btn btn-primary" onclick="copyText('sublink-field')"><i class="fa fa-copy"></i></button>
+    </div>
+  </div>
+  {% endif %}
+  {% for link in links %}
+  <div class="form-group">
+    <label>لینک کانفیگ {{ forloop.counter }}</label>
+    <div class="input-group">
+      <input type="text" class="input" readonly value="{{ link }}" id="cfglink-{{ forloop.counter }}"/>
+      <button type="button" class="btn btn-primary" onclick="copyText('cfglink-{{ forloop.counter }}')"><i class="fa fa-copy"></i></button>
+    </div>
+  </div>
+  {% empty %}
+  {% if not config.sub_link %}<p class="empty-text">لینکی ثبت نشده است.</p>{% endif %}
+  {% endfor %}
+</div>
+
+<div class="grid-2 mt-3">
+  <div class="card">
+    <h2 class="card-title"><i class="fa fa-pen"></i> ویرایش نام</h2>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="rename"/>
+      <div class="form-group">
+        <input type="text" name="label" class="input" value="{{ config.label }}" maxlength="64" placeholder="نام دلخواه"/>
+      </div>
+      <button type="submit" class="btn btn-primary w-full"><i class="fa fa-save"></i> ذخیره</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">
+      {% if config.status == 'active' %}<i class="fa fa-pause"></i> غیرفعال‌سازی موقت
+      {% else %}<i class="fa fa-play"></i> فعال‌سازی{% endif %}
+    </h2>
+    <p class="wallet-note">
+      {% if config.status == 'active' %}کانفیگ همچنان روی پنل باقی می‌ماند ولی موقتاً قابل استفاده نخواهد بود.
+      {% else %}کانفیگ دوباره قابل استفاده می‌شود.{% endif %}
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="toggle"/>
+      <button type="submit" class="btn {% if config.status == 'active' %}btn-warning{% else %}btn-primary{% endif %} w-full">
+        {% if config.status == 'active' %}🚫 غیرفعال کن{% else %}✅ فعال کن{% endif %}
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="card mt-3">
+  <h2 class="card-title"><i class="fa fa-sliders"></i> تغییر حجم و زمان (بازنشانی کامل)</h2>
+  <p class="wallet-note">
+    <i class="fa fa-info-circle"></i>
+    مقدار جدید کاملاً جایگزین مقدار فعلی می‌شود و ترافیک مصرفی کانفیگ ریست می‌شود. حداکثر حجم مجاز
+    (با احتساب سایر کانفیگ‌های شما): {{ config.volume_gb|floatformat:0 }} GB + حجم باقی‌مانده‌ی پنل شما.
+  </p>
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="resize"/>
+    <div class="grid-2">
+      <div class="form-group">
+        <label>حجم جدید (GB)</label>
+        <input type="number" name="volume_gb" class="input" min="0.1" step="0.1" value="{{ config.volume_gb }}" required/>
+      </div>
+      <div class="form-group">
+        <label>مدت جدید (روز، از الان)</label>
+        <input type="number" name="duration_days" class="input" min="1" step="1" required/>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary w-full"><i class="fa fa-rotate"></i> اعمال تغییر</button>
+  </form>
+</div>
+
+<div class="card mt-3">
+  <h2 class="card-title"><i class="fa fa-calendar-plus"></i> تمدید سریع</h2>
+  <p class="wallet-note">به تاریخ انقضای فعلی اضافه می‌شود (بدون تغییر حجم و بدون ریست ترافیک).</p>
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="renew"/>
+    <div class="input-group">
+      <input type="number" name="extra_days" class="input" min="1" step="1" placeholder="تعداد روز" required/>
+      <button type="submit" class="btn btn-primary"><i class="fa fa-plus"></i> تمدید</button>
+    </div>
+  </form>
+</div>
+
+<div class="card mt-3">
+  <h2 class="card-title" style="color:var(--danger)"><i class="fa fa-trash"></i> حذف کامل کانفیگ</h2>
+  <p class="wallet-note">این عملیات کانفیگ را هم از پنل x-ui و هم از این پنل نمایندگی برای همیشه حذف می‌کند.</p>
+  <form method="post" onsubmit="return confirm('آیا از حذف کامل این کانفیگ مطمئن هستید؟')">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="delete"/>
+    <button type="submit" class="btn btn-danger w-full"><i class="fa fa-trash"></i> حذف کامل</button>
+  </form>
+</div>
+
+<script>
+function copyText(id) {
+  var field = document.getElementById(id);
+  field.select();
+  field.setSelectionRange(0, 99999);
+  navigator.clipboard.writeText(field.value).catch(function () {
+    document.execCommand('copy');
+  });
+}
+</script>
+{% endblock %}

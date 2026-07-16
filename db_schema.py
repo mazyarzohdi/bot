@@ -100,6 +100,46 @@ CREATE TABLE IF NOT EXISTS orders (
     FOREIGN KEY (product_id) REFERENCES products(id)
 );
 
+CREATE TABLE IF NOT EXISTS reseller_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    volume_gb REAL NOT NULL,
+    duration_days INTEGER NOT NULL,
+    price INTEGER NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS resellers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER UNIQUE NOT NULL,
+    plan_id INTEGER,
+    total_volume_gb REAL NOT NULL DEFAULT 0,
+    expires_at TEXT,
+    status TEXT DEFAULT 'active',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (plan_id) REFERENCES reseller_plans(id)
+);
+
+CREATE TABLE IF NOT EXISTS reseller_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reseller_id INTEGER NOT NULL,
+    panel_id INTEGER NOT NULL,
+    email TEXT NOT NULL,
+    label TEXT DEFAULT '',
+    sub_id TEXT,
+    volume_gb REAL NOT NULL,
+    expiry_time INTEGER DEFAULT 0,
+    config_link TEXT,
+    config_links TEXT DEFAULT '[]',
+    sub_link TEXT,
+    status TEXT DEFAULT 'active',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (reseller_id) REFERENCES resellers(id),
+    FOREIGN KEY (panel_id) REFERENCES panels(id)
+);
+
 CREATE TABLE IF NOT EXISTS payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -146,50 +186,6 @@ CREATE TABLE IF NOT EXISTS coupon_uses (
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS reseller_plans (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    panel_id INTEGER NOT NULL,
-    volume_gb REAL NOT NULL,
-    duration_days INTEGER NOT NULL,
-    price INTEGER NOT NULL,
-    is_active INTEGER DEFAULT 1,
-    description TEXT DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (panel_id) REFERENCES panels(id)
-);
-
-CREATE TABLE IF NOT EXISTS resellers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER UNIQUE NOT NULL,
-    plan_id INTEGER,
-    panel_id INTEGER NOT NULL,
-    quota_gb REAL NOT NULL DEFAULT 0,
-    expires_at INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (plan_id) REFERENCES reseller_plans(id),
-    FOREIGN KEY (panel_id) REFERENCES panels(id)
-);
-
-CREATE TABLE IF NOT EXISTS reseller_configs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    reseller_id INTEGER NOT NULL,
-    label TEXT DEFAULT '',
-    email TEXT NOT NULL,
-    sub_id TEXT,
-    volume_gb REAL NOT NULL,
-    expiry_time INTEGER DEFAULT 0,
-    config_link TEXT,
-    config_links TEXT DEFAULT '[]',
-    sub_link TEXT,
-    status TEXT NOT NULL DEFAULT 'active',
-    consumed_gb REAL NOT NULL DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (reseller_id) REFERENCES resellers(id)
 );
 
 CREATE TABLE IF NOT EXISTS faq (
