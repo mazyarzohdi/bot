@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>ورود — BananaBot Panel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'css/main.css' %}"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body class="login-page">
+  <div class="login-wrap" id="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">
+        <span>🍌</span>
+        <h1>BananaBot Panel</h1>
+        <p id="login-subtitle">با حساب تلگرام خود وارد شوید</p>
+      </div>
+
+      {% if messages %}
+        {% for msg in messages %}
+          <div class="alert alert-error">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+
+      {% if bot_token_set %}
+        <div class="tg-login-wrap" id="tg-login-wrap">
+          <script async src="https://telegram.org/js/telegram-widget.js?22"
+            data-telegram-login="{{ bot_username }}"
+            data-size="large"
+            data-auth-url="{{ request.build_absolute_uri }}"
+            data-request-access="write">
+          </script>
+        </div>
+        <p class="login-hint" id="login-hint">
+          <i class="fa fa-info-circle"></i>
+          با کلیک روی دکمه «Log in with Telegram» وارد شوید.
+        </p>
+      {% else %}
+        <div class="alert alert-error">
+          <i class="fa fa-triangle-exclamation"></i>
+          BOT_TOKEN تنظیم نشده. لطفاً وب‌اپ را پیکربندی کنید.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    // If this page was opened as a Telegram Mini App (i.e. via the bot's
+    // "پنل وب" button), Telegram injects window.Telegram.WebApp and gives us
+    // a signed initData string — we can log the user in automatically
+    // instead of showing the browser-only "Log in with Telegram" widget,
+    // which doesn't make sense (and often doesn't render) inside Telegram's
+    // own webview.
+    (function () {
+      var tg = window.Telegram && window.Telegram.WebApp;
+      if (!tg || !tg.initData) {
+        return; // Normal browser visit — the Login Widget above handles it.
+      }
+
+      tg.ready();
+      tg.expand();
+
+      var wrap = document.getElementById("tg-login-wrap");
+      var hint = document.getElementById("login-hint");
+      var subtitle = document.getElementById("login-subtitle");
+      if (wrap) wrap.style.display = "none";
+      if (hint) hint.style.display = "none";
+      if (subtitle) subtitle.textContent = "در حال ورود خودکار...";
+
+      fetch("{% url 'panel:webapp_login' %}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ initData: tg.initData }),
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (data.ok) {
+            window.location.href = data.redirect;
+          } else {
+            if (subtitle) subtitle.textContent = "ورود خودکار ناموفق بود. لطفاً دوباره تلاش کنید.";
+            if (wrap) wrap.style.display = "";
+            if (hint) hint.style.display = "";
+          }
+        })
+        .catch(function () {
+          if (subtitle) subtitle.textContent = "خطا در برقراری ارتباط. لطفاً دوباره تلاش کنید.";
+          if (wrap) wrap.style.display = "";
+          if (hint) hint.style.display = "";
+        });
+    })();
+  </script>
+</body>
+</html>

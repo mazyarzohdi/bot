@@ -1,0 +1,35 @@
+{% extends "shared/base.html" %}
+{% block title %}سرویس‌های من{% endblock %}
+{% block page_title %}سرویس‌های من{% endblock %}
+{% block nav_services %}active{% endblock %}
+{% block content %}
+{% if subscriptions %}
+<div class="services-grid">
+  {% for s in subscriptions %}
+  <div class="service-card">
+    <div class="service-card-header {% if s.status == 'active' %}active{% else %}inactive{% endif %}">
+      <i class="fa fa-shield-halved"></i>
+      <span class="service-status">{% if s.status == 'active' %}● فعال{% else %}● {{ s.status }}{% endif %}</span>
+    </div>
+    <div class="service-card-body">
+      <h3>{{ s.product_name|default:"سرویس VPN" }}</h3>
+      <div class="service-detail"><i class="fa fa-desktop"></i> {{ s.panel_name|default:"—" }}</div>
+      <div class="service-detail"><i class="fa fa-envelope"></i> <code>{{ s.email }}</code></div>
+      <div class="service-detail"><i class="fa fa-calendar"></i> {{ s.created_at }}</div>
+      {% if s.sub_link %}
+      <a href="{{ s.sub_link }}" class="btn btn-sm btn-primary mt-2" target="_blank">
+        <i class="fa fa-link"></i> لینک سابسکریپشن
+      </a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty-card">
+  <i class="fa fa-box-open fa-3x"></i>
+  <p>هنوز سرویسی خریداری نکرده‌اید.</p>
+  <a href="{% url 'panel:user_buy' %}" class="btn btn-primary">خرید سرویس</a>
+</div>
+{% endif %}
+{% endblock %}

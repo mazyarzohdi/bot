@@ -1,0 +1,28 @@
+{% extends "shared/base.html" %}
+{% block title %}پنل‌ها{% endblock %}
+{% block page_title %}مدیریت پنل‌ها{% endblock %}
+{% block nav_panels %}active{% endblock %}
+{% block content %}
+<div class="card">
+  <h2 class="card-title">پنل‌های 3x-ui</h2>
+  <table class="table">
+    <thead>
+      <tr><th>ID</th><th>نام</th><th>آدرس</th><th>Inbounds</th><th>وضعیت</th><th>عملیات</th></tr>
+    </thead>
+    <tbody>
+    {% for p in panels %}
+      <tr>
+        <td>{{ p.id }}</td>
+        <td>{{ p.name }}</td>
+        <td><small><a href="{{ p.url }}" target="_blank">{{ p.url }}</a></small></td>
+        <td><code>{{ p.inbound_ids }}</code></td>
+        <td>{% if p.is_active %}<span class="badge-green">فعال</span>{% else %}<span class="badge-red">غیرفعال</span>{% endif %}</td>
+        <td><a href="{% url 'panel:admin_panel_edit' p.id %}" class="btn btn-sm btn-primary"><i class="fa fa-edit"></i> ویرایش</a></td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" class="empty-row">پنلی ثبت نشده.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

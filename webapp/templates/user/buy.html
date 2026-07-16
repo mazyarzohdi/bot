@@ -1,0 +1,43 @@
+{% extends "shared/base.html" %}
+{% block title %}خرید سرویس{% endblock %}
+{% block page_title %}خرید سرویس{% endblock %}
+{% block nav_buy %}active{% endblock %}
+{% block content %}
+<div class="balance-info card mb-3">
+  <i class="fa fa-wallet"></i> موجودی شما: <strong>{{ db_user.balance|default:0|floatformat:0 }} تومان</strong>
+  <a href="{% url 'panel:user_wallet' %}" class="btn btn-sm btn-ghost">افزایش موجودی</a>
+</div>
+
+{% if products %}
+<div class="products-grid">
+  {% for p in products %}
+  <div class="product-card">
+    <div class="product-icon"><i class="fa fa-bolt"></i></div>
+    <h3 class="product-name">{{ p.name }}</h3>
+    <div class="product-details">
+      <div><i class="fa fa-database"></i> {{ p.volume_gb }} GB</div>
+      <div><i class="fa fa-clock"></i> {{ p.duration_days }} روز</div>
+      <div><i class="fa fa-desktop"></i> {{ p.panel_name }}</div>
+    </div>
+    {% if p.description %}<p class="product-desc">{{ p.description }}</p>{% endif %}
+    <div class="product-price">{{ p.price|floatformat:0 }} تومان</div>
+    <div class="product-action">
+      {% if db_user.balance >= p.price %}
+        <a href="https://t.me/{{ bot_username }}?start=buy_{{ p.id }}" target="_blank" class="btn btn-primary w-full">
+          <i class="fa fa-cart-shopping"></i> خرید از ربات
+        </a>
+      {% else %}
+        <button class="btn btn-ghost w-full" disabled>موجودی ناکافی</button>
+        <a href="{% url 'panel:user_wallet' %}" class="btn btn-sm btn-warning w-full mt-1">افزایش موجودی</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty-card">
+  <i class="fa fa-box-open fa-3x"></i>
+  <p>در حال حاضر محصولی موجود نیست.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends "shared/base.html" %}
+{% block title %}کاربران{% endblock %}
+{% block page_title %}مدیریت کاربران{% endblock %}
+{% block nav_users %}active{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-toolbar">
+    <form method="get" class="search-form">
+      <input name="q" value="{{ search }}" placeholder="جستجو: نام، یوزرنیم، آیدی..." class="input"/>
+      <button type="submit" class="btn btn-primary"><i class="fa fa-search"></i></button>
+      {% if search %}<a href="{% url 'panel:admin_users' %}" class="btn btn-ghost">× پاک کردن</a>{% endif %}
+    </form>
+    <span class="meta">{{ total }} کاربر</span>
+  </div>
+
+  <table class="table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>نام</th>
+        <th>یوزرنیم</th>
+        <th>آیدی تلگرام</th>
+        <th>موجودی</th>
+        <th>وضعیت</th>
+        <th>عملیات</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr {% if u.is_banned %}class="row-banned"{% endif %}>
+        <td>{{ u.id }}</td>
+        <td>{{ u.full_name|default:"—" }}</td>
+        <td>{% if u.username %}<a href="https://t.me/{{ u.username }}" target="_blank">@{{ u.username }}</a>{% else %}—{% endif %}</td>
+        <td><code>{{ u.telegram_id }}</code></td>
+        <td>{{ u.balance|default:0 }} <small>تومان</small></td>
+        <td>
+          {% if u.is_banned %}
+            <span class="badge-red">بن شده</span>
+          {% else %}
+            <span class="badge-green">فعال</span>
+          {% endif %}
+        </td>
+        <td>
+          <a href="{% url 'panel:admin_user_detail' u.telegram_id %}" class="btn btn-sm btn-primary">
+            <i class="fa fa-eye"></i> جزئیات
+          </a>
+        </td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="7" class="empty-row">کاربری پیدا نشد.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% include "shared/pagination.html" with base_url="panel:admin_users" %}
+</div>
+{% endblock %}

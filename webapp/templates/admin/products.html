@@ -1,0 +1,40 @@
+{% extends "shared/base.html" %}
+{% block title %}محصولات{% endblock %}
+{% block page_title %}مدیریت محصولات{% endblock %}
+{% block nav_products %}active{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-toolbar">
+    <h2 class="card-title">محصولات</h2>
+    <a href="{% url 'panel:admin_product_add' %}" class="btn btn-primary"><i class="fa fa-plus"></i> محصول جدید</a>
+  </div>
+  <table class="table">
+    <thead>
+      <tr><th>ID</th><th>نام</th><th>پنل</th><th>حجم</th><th>مدت</th><th>قیمت</th><th>وضعیت</th><th>عملیات</th></tr>
+    </thead>
+    <tbody>
+    {% for p in products %}
+      <tr>
+        <td>{{ p.id }}</td>
+        <td>{{ p.name }}</td>
+        <td>{{ p.panel_name }}</td>
+        <td>{{ p.volume_gb }} GB</td>
+        <td>{{ p.duration_days }} روز</td>
+        <td>{{ p.price|floatformat:0 }} تومان</td>
+        <td>{% if p.is_active %}<span class="badge-green">فعال</span>{% else %}<span class="badge-red">غیرفعال</span>{% endif %}</td>
+        <td>
+          <a href="{% url 'panel:admin_product_edit' p.id %}" class="btn btn-sm btn-primary"><i class="fa fa-edit"></i></a>
+          <form method="post" action="{% url 'panel:admin_product_delete' p.id %}" style="display:inline"
+            onsubmit="return confirm('حذف شود؟')">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-danger"><i class="fa fa-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="8" class="empty-row">محصولی ثبت نشده.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

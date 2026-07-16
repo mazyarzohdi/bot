@@ -1,0 +1,72 @@
+{% extends "shared/base.html" %}
+{% block title %}پرداخت #{{ payment.id }}{% endblock %}
+{% block page_title %}جزئیات پرداخت{% endblock %}
+{% block nav_payments %}active{% endblock %}
+{% block content %}
+<a href="{% url 'panel:admin_payments' %}" class="btn btn-ghost mb-3"><i class="fa fa-arrow-right"></i> بازگشت</a>
+<div class="grid-2">
+  <div class="card">
+    <h2 class="card-title">اطلاعات پرداخت #{{ payment.id }}</h2>
+    <div class="detail-row"><span>کاربر:</span><strong>{{ payment.full_name|default:payment.telegram_id }}</strong></div>
+    <div class="detail-row"><span>مبلغ:</span><strong class="text-green">{{ payment.amount|floatformat:0 }} تومان</strong></div>
+    {% if payment.expected_amount %}
+    <div class="detail-row"><span>مبلغ درخواستی از کاربر (با شناسه):</span><strong>{{ payment.expected_amount|floatformat:0 }} ریال</strong></div>
+    {% endif %}
+    <div class="detail-row"><span>روش پرداخت:</span>{{ payment.payment_method }}</div>
+    <div class="detail-row"><span>وضعیت:</span>
+      {% if payment.status == 'pending' %}<span class="badge-orange">در انتظار</span>
+      {% elif payment.status == 'approved' %}<span class="badge-green">تأیید شده</span>
+      {% elif payment.status == 'rejected' %}<span class="badge-red">رد شده</span>
+      {% elif payment.status == 'cancelled' %}<span class="badge-red">لغوشده توسط کاربر</span>
+      {% elif payment.status == 'expired' %}<span class="badge-red">منقضی‌شده (بدون پرداخت)</span>
+      {% else %}<span class="badge-red">{{ payment.status }}</span>{% endif %}
+    </div>
+    {% if payment.expires_at and payment.status == 'pending' %}
+    <div class="detail-row"><span>مهلت پرداخت خودکار تا:</span><small>{{ payment.expires_at }}</small></div>
+    {% endif %}
+    {% if payment.admin_note %}
+    <div class="detail-row"><span>یادداشت ادمین:</span>{{ payment.admin_note }}</div>
+    {% endif %}
+    <div class="detail-row"><span>تاریخ:</span><small>{{ payment.created_at }}</small></div>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title"><i class="fa fa-receipt"></i> رسید پرداخت</h2>
+    {% if payment.receipt_file_id %}
+      <a href="{% url 'panel:admin_payment_receipt' payment.id %}" target="_blank" rel="noopener">
+        <img src="{% url 'panel:admin_payment_receipt' payment.id %}"
+             alt="رسید پرداخت #{{ payment.id }}"
+             style="width:100%; border-radius:10px; display:block; cursor:zoom-in;"
+             loading="lazy"/>
+      </a>
+      <p class="login-hint" style="margin-top:8px;">
+        <i class="fa fa-info-circle"></i> برای مشاهده در سایز کامل روی تصویر بزنید.
+      </p>
+    {% else %}
+      <p class="empty-row">کاربر هنوز رسیدی برای این پرداخت آپلود نکرده است.</p>
+    {% endif %}
+  </div>
+
+  {% if payment.status == 'pending' %}
+  <div class="card">
+    <h2 class="card-title">اقدام</h2>
+    <form method="post">
+      {% csrf_token %}
+      <div class="form-group">
+        <label>یادداشت (اختیاری)</label>
+        <input type="text" name="note" class="input" placeholder="یادداشت برای کاربر..."/>
+      </div>
+      <div class="btn-group">
+        <button type="submit" name="action" value="approve" class="btn btn-success">
+          <i class="fa fa-check"></i> تأیید و شارژ موجودی
+        </button>
+        <button type="submit" name="action" value="reject" class="btn btn-danger"
+          onclick="return confirm('آیا مطمئن به رد هستید؟')">
+          <i class="fa fa-times"></i> رد پرداخت
+        </button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

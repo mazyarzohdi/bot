@@ -1,0 +1,65 @@
+{% extends "shared/base.html" %}
+{% block title %}پنل {{ panel.name }}{% endblock %}
+{% block page_title %}ویرایش پنل{% endblock %}
+{% block nav_panels %}active{% endblock %}
+{% block content %}
+<a href="{% url 'panel:admin_panels' %}" class="btn btn-ghost mb-3"><i class="fa fa-arrow-right"></i> بازگشت</a>
+<div class="grid-2">
+  <div class="card">
+    <h2 class="card-title">اطلاعات پنل</h2>
+    <div class="detail-row"><span>نام:</span><strong>{{ panel.name }}</strong></div>
+    <div class="detail-row"><span>آدرس:</span><a href="{{ panel.url }}" target="_blank">{{ panel.url }}</a></div>
+    <div class="detail-row"><span>Inbounds:</span><code>{{ inbound_ids }}</code></div>
+    <div class="detail-row"><span>لینک ساب:</span>
+      {% if panel.sub_link_template %}<span class="badge-green">تنظیم شده</span>{% else %}<span class="badge-red">تنظیم نشده</span>{% endif %}
+    </div>
+    <div class="detail-row"><span>On-Hold:</span>{% if panel.on_hold %}<span class="badge-orange">فعال</span>{% else %}<span class="badge-gray">غیرفعال</span>{% endif %}</div>
+    <div class="detail-row"><span>وضعیت:</span>{% if panel.is_active %}<span class="badge-green">فعال</span>{% else %}<span class="badge-red">غیرفعال</span>{% endif %}</div>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">عملیات</h2>
+    <!-- ویرایش Inbounds -->
+    <form method="post" class="action-form">
+      {% csrf_token %}
+      <div class="form-group">
+        <label><i class="fa fa-list"></i> ویرایش Inbounds</label>
+        <input type="text" name="inbound_ids" class="input"
+          value="{{ inbound_ids|join:',' }}"
+          placeholder="مثال: 54,81,83"/>
+        <small>آیدی‌های عددی با کاما</small>
+      </div>
+      <button type="submit" name="action" value="update_inbounds" class="btn btn-primary w-full">
+        <i class="fa fa-save"></i> ذخیره Inbounds
+      </button>
+    </form>
+
+    <div class="divider"></div>
+
+    <!-- تغییر وضعیت -->
+    <form method="post" class="action-form">
+      {% csrf_token %}
+      <button type="submit" name="action" value="toggle_active"
+        class="btn {% if panel.is_active %}btn-warning{% else %}btn-success{% endif %} w-full">
+        {% if panel.is_active %}<i class="fa fa-ban"></i> غیرفعال کردن{% else %}<i class="fa fa-check"></i> فعال کردن{% endif %}
+      </button>
+    </form>
+
+    <form method="post" class="action-form mt-2">
+      {% csrf_token %}
+      <button type="submit" name="action" value="toggle_onhold" class="btn btn-ghost w-full">
+        <i class="fa fa-clock"></i> تغییر وضعیت On-Hold
+      </button>
+    </form>
+
+    <div class="divider"></div>
+
+    <form method="post" class="action-form" onsubmit="return confirm('پنل حذف شود؟')">
+      {% csrf_token %}
+      <button type="submit" name="action" value="delete" class="btn btn-danger w-full">
+        <i class="fa fa-trash"></i> حذف پنل
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}

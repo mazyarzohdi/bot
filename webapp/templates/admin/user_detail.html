@@ -1,0 +1,106 @@
+{% extends "shared/base.html" %}
+{% block title %}کاربر {{ u.full_name }}{% endblock %}
+{% block page_title %}جزئیات کاربر{% endblock %}
+{% block nav_users %}active{% endblock %}
+
+{% block content %}
+<a href="{% url 'panel:admin_users' %}" class="btn btn-ghost mb-3"><i class="fa fa-arrow-right"></i> بازگشت</a>
+
+<div class="grid-2">
+  <!-- کارت اطلاعات -->
+  <div class="card">
+    <h2 class="card-title"><i class="fa fa-user"></i> اطلاعات کاربر</h2>
+    <div class="detail-row"><span>نام:</span><strong>{{ u.full_name|default:"—" }}</strong></div>
+    <div class="detail-row"><span>یوزرنیم:</span><strong>{% if u.username %}@{{ u.username }}{% else %}—{% endif %}</strong></div>
+    <div class="detail-row"><span>آیدی تلگرام:</span><code>{{ u.telegram_id }}</code></div>
+    <div class="detail-row"><span>موجودی:</span><strong class="text-green">{{ u.balance|default:0 }} تومان</strong></div>
+    <div class="detail-row"><span>وضعیت:</span>
+      {% if u.is_banned %}<span class="badge-red">بن شده</span>{% else %}<span class="badge-green">فعال</span>{% endif %}
+    </div>
+    <div class="detail-row"><span>تاریخ ثبت‌نام:</span><small>{{ u.created_at }}</small></div>
+  </div>
+
+  <!-- عملیات -->
+  <div class="card">
+    <h2 class="card-title"><i class="fa fa-sliders"></i> عملیات</h2>
+
+    <form method="post" class="action-form">
+      {% csrf_token %}
+      <div class="form-group">
+        <label>افزایش موجودی (تومان)</label>
+        <div class="input-group">
+          <input type="number" name="amount" min="1000" placeholder="مثال: 50000" class="input"/>
+          <button type="submit" name="action" value="add_balance" class="btn btn-success">
+            <i class="fa fa-plus"></i> افزایش
+          </button>
+        </div>
+      </div>
+    </form>
+
+    <form method="post" class="action-form">
+      {% csrf_token %}
+      <div class="form-group">
+        <label>کاهش موجودی (تومان)</label>
+        <div class="input-group">
+          <input type="number" name="amount" min="1000" placeholder="مثال: 50000" class="input"/>
+          <button type="submit" name="action" value="sub_balance" class="btn btn-danger">
+            <i class="fa fa-minus"></i> کاهش
+          </button>
+        </div>
+      </div>
+    </form>
+
+    <form method="post" class="action-form mt-3">
+      {% csrf_token %}
+      {% if u.is_banned %}
+        <button type="submit" name="action" value="unban" class="btn btn-success w-full">
+          <i class="fa fa-check"></i> آن‌بن کردن
+        </button>
+      {% else %}
+        <button type="submit" name="action" value="ban" class="btn btn-danger w-full"
+          onclick="return confirm('آیا مطمئن هستید؟')">
+          <i class="fa fa-ban"></i> بن کردن
+        </button>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+<!-- سرویس‌ها -->
+<div class="card mt-3">
+  <h2 class="card-title"><i class="fa fa-server"></i> سرویس‌های کاربر ({{ subscriptions|length }})</h2>
+  {% if subscriptions %}
+  <table class="table">
+    <thead>
+      <tr><th>ID</th><th>محصول</th><th>پنل</th><th>ایمیل</th><th>وضعیت</th><th>تاریخ</th><th>عملیات</th></tr>
+    </thead>
+    <tbody>
+      {% for s in subscriptions %}
+      <tr>
+        <td>{{ s.id }}</td>
+        <td>{{ s.product_name|default:"—" }}</td>
+        <td>{{ s.panel_name|default:"—" }}</td>
+        <td><code>{{ s.email }}</code></td>
+        <td>
+          {% if s.status == "active" %}<span class="badge-green">فعال</span>
+          {% else %}<span class="badge-red">{{ s.status }}</span>{% endif %}
+        </td>
+        <td><small>{{ s.created_at }}</small></td>
+        <td>
+          {% if s.status == "active" %}
+          <form method="post" action="{% url 'panel:admin_subscription_delete' s.id %}"
+                onsubmit="return confirm('این سرویس هم از پنل x-ui و هم از دیتابیس حذف می‌شود. ادامه می‌دهید؟')">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-danger"><i class="fa fa-trash"></i> حذف</button>
+          </form>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="empty-text">این کاربر سرویسی ندارد.</p>
+  {% endif %}
+</div>
+{% endblock %}

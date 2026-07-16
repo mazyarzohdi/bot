@@ -1,0 +1,77 @@
+{% extends "shared/base.html" %}
+{% block title %}تنظیمات{% endblock %}
+{% block page_title %}تنظیمات ربات{% endblock %}
+{% block nav_settings %}active{% endblock %}
+{% block content %}
+<div class="card mb-3" style="max-width:700px">
+  <h2 class="card-title"><i class="fa fa-robot"></i> تایید خودکار پرداخت (پیامک بانکی)</h2>
+  <div class="detail-row">
+    <span>وضعیت فعلی</span>
+    {% if auto_payment.enabled %}<span class="badge-green">فعال</span>
+    {% else %}<span class="badge-orange">غیرفعال</span>{% endif %}
+  </div>
+  <div class="detail-row">
+    <span>کلید امنیتی وبهوک</span>
+    {% if auto_payment.secret_set %}<span class="badge-green">تنظیم شده</span>
+    {% else %}<span class="badge-red">تنظیم نشده</span>{% endif %}
+  </div>
+  <div class="detail-row"><span>آدرس وبهوک (سرویس مستقل، جدا از این پنل)</span></div>
+  <div class="card-number" style="font-size:14px; word-break:break-all;">
+    http://{{ auto_payment.host }}:{{ auto_payment.port }}/webhook/payment/
+  </div>
+  <p class="wallet-note">
+    <i class="fa fa-info-circle"></i>
+    این وبهوک روی یک سرویس و پورت کاملاً جدا از پنل وب اجرا می‌شود (سرویس <code>bananabot-webhook</code>).
+    روشن/خاموش‌کردن، تنظیم کلید امنیتی، و تغییر پورت همه از داخل خودِ ربات تلگرام انجام می‌شود:
+    منوی ادمین ← ⚙️ تنظیمات ربات ← 🤖 تایید خودکار پرداخت / 🔑 کلید امنیتی / 🔌 پورت وبهوک.
+    وضعیت زنده‌ی این سرویس را می‌توانید از <code>manage.sh</code> (گزینه‌ی Webhook Status & Info)
+    ببینید. راهنمای کامل راه‌اندازی در فایل AUTO_PAYMENT_SETUP.md پروژه موجود است.
+  </p>
+</div>
+
+<div class="card mb-3" style="max-width:700px">
+  <h2 class="card-title"><i class="fa fa-sack-dollar"></i> ویرایش دستی کل درآمد</h2>
+  <p class="wallet-note">
+    <i class="fa fa-info-circle"></i>
+    درآمد محاسبه‌شده از تراکنش‌های تأییدشده: <strong>{{ revenue.computed_total|floatformat:0 }}</strong> تومان
+    {% if revenue.adjustment %}
+      (+ تعدیل دستی {{ revenue.adjustment|floatformat:0 }} تومان)
+    {% endif %}
+    — کل نمایش داده‌شده در داشبورد: <strong class="text-green">{{ revenue.total|floatformat:0 }}</strong> تومان
+  </p>
+  <form method="post" class="mt-2">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="set_revenue"/>
+    <div class="form-group">
+      <label>مقدار جدید کل درآمد (تومان)</label>
+      <div class="input-group">
+        <input type="number" name="revenue_total" value="{{ revenue.total|floatformat:0 }}" class="input"/>
+        <button type="submit" class="btn btn-primary"><i class="fa fa-save"></i> ثبت</button>
+      </div>
+      <small>
+        این مقدار روی داشبورد به‌عنوان «کل درآمد» نمایش داده می‌شود و از این پس با تأیید پرداخت‌های جدید هم به‌روز می‌ماند.
+      </small>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="max-width:700px">
+  <h2 class="card-title"><i class="fa fa-gear"></i> تنظیمات ربات</h2>
+  <form method="post">
+    {% csrf_token %}
+    {% for f in fields %}
+    <div class="form-group">
+      <label>{{ f.label }}</label>
+      {% if f.type == "textarea" %}
+        <textarea name="{{ f.key }}" class="input" rows="3">{{ f.value }}</textarea>
+      {% else %}
+        <input type="text" name="{{ f.key }}" value="{{ f.value }}" class="input"/>
+      {% endif %}
+    </div>
+    {% endfor %}
+    <button type="submit" class="btn btn-primary w-full mt-3">
+      <i class="fa fa-save"></i> ذخیره همه تنظیمات
+    </button>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,55 @@
+{% extends "shared/base.html" %}
+{% block title %}{% if product %}ویرایش محصول{% else %}محصول جدید{% endif %}{% endblock %}
+{% block page_title %}{% if product %}ویرایش محصول{% else %}افزودن محصول{% endif %}{% endblock %}
+{% block nav_products %}active{% endblock %}
+{% block content %}
+<a href="{% url 'panel:admin_products' %}" class="btn btn-ghost mb-3"><i class="fa fa-arrow-right"></i> بازگشت</a>
+<div class="card" style="max-width:600px">
+  <form method="post">
+    {% csrf_token %}
+    <div class="form-group">
+      <label>نام محصول</label>
+      <input type="text" name="name" value="{{ product.name|default:'' }}" class="input" required/>
+    </div>
+    <div class="form-group">
+      <label>پنل</label>
+      <select name="panel_id" class="input" required>
+        {% for panel in panels %}
+          <option value="{{ panel.id }}" {% if product and product.panel_id == panel.id %}selected{% endif %}>
+            {{ panel.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="grid-2">
+      <div class="form-group">
+        <label>حجم (GB)</label>
+        <input type="number" step="0.1" name="volume_gb" value="{{ product.volume_gb|default:'' }}" class="input" required/>
+      </div>
+      <div class="form-group">
+        <label>مدت (روز)</label>
+        <input type="number" name="duration_days" value="{{ product.duration_days|default:'' }}" class="input" required/>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>قیمت (تومان)</label>
+      <input type="number" name="price" value="{{ product.price|default:'' }}" class="input" required/>
+    </div>
+    <div class="form-group">
+      <label>توضیحات (اختیاری)</label>
+      <textarea name="description" class="input" rows="3">{{ product.description|default:'' }}</textarea>
+    </div>
+    {% if product %}
+    <div class="form-group checkbox-group">
+      <label>
+        <input type="checkbox" name="is_active" {% if product.is_active %}checked{% endif %}/>
+        محصول فعال باشد
+      </label>
+    </div>
+    {% endif %}
+    <button type="submit" class="btn btn-primary w-full">
+      <i class="fa fa-save"></i> ذخیره
+    </button>
+  </form>
+</div>
+{% endblock %}

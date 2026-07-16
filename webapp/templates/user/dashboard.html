@@ -1,0 +1,54 @@
+{% extends "shared/base.html" %}
+{% block title %}داشبورد{% endblock %}
+{% block page_title %}داشبورد{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block content %}
+<div class="welcome-banner">
+  <div class="welcome-text">
+    <h2>سلام، {{ tg_user.first_name }} 👋</h2>
+    <p>به پنل مدیریت BananaBot خوش آمدید.</p>
+  </div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card accent-blue">
+    <div class="stat-icon"><i class="fa fa-wallet"></i></div>
+    <div class="stat-body">
+      <div class="stat-value">{{ db_user.balance|default:0|floatformat:0 }}</div>
+      <div class="stat-label">موجودی (تومان)</div>
+    </div>
+    <div class="stat-sub"><a href="{% url 'panel:user_wallet' %}">افزایش موجودی ←</a></div>
+  </div>
+  <div class="stat-card accent-green">
+    <div class="stat-icon"><i class="fa fa-server"></i></div>
+    <div class="stat-body">
+      <div class="stat-value">{{ subscriptions|length }}</div>
+      <div class="stat-label">سرویس‌های من</div>
+    </div>
+    <div class="stat-sub"><a href="{% url 'panel:user_services' %}">مشاهده ←</a></div>
+  </div>
+</div>
+
+{% if subscriptions %}
+<div class="card mt-3">
+  <h2 class="card-title">آخرین سرویس‌ها</h2>
+  {% for s in subscriptions|slice:":3" %}
+  <div class="service-row">
+    <div class="service-icon"><i class="fa fa-shield-halved"></i></div>
+    <div class="service-info">
+      <div class="service-name">{{ s.product_name|default:"سرویس" }}</div>
+      <div class="service-meta">{{ s.panel_name }} — {{ s.status }}</div>
+    </div>
+    <span class="badge-{% if s.status == 'active' %}green{% else %}red{% endif %}">{{ s.status }}</span>
+  </div>
+  {% endfor %}
+  <a href="{% url 'panel:user_services' %}" class="btn btn-ghost mt-2">مشاهده همه ←</a>
+</div>
+{% else %}
+<div class="card mt-3 empty-card">
+  <i class="fa fa-box-open fa-2x"></i>
+  <p>هنوز سرویسی خریداری نکرده‌اید.</p>
+  <a href="{% url 'panel:user_buy' %}" class="btn btn-primary">خرید سرویس</a>
+</div>
+{% endif %}
+{% endblock %}

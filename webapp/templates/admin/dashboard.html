@@ -1,0 +1,86 @@
+{% extends "shared/base.html" %}
+{% block title %}داشبورد ادمین — BananaBot{% endblock %}
+{% block page_title %}داشبورد{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+  <div class="stat-card accent-blue">
+    <div class="stat-icon"><i class="fa fa-users"></i></div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.users.total }}</div>
+      <div class="stat-label">کل کاربران</div>
+    </div>
+    <div class="stat-sub">+{{ stats.users.today }} امروز</div>
+  </div>
+
+  <div class="stat-card accent-green">
+    <div class="stat-icon"><i class="fa fa-money-bill-wave"></i></div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.revenue.total|floatformat:0 }}</div>
+      <div class="stat-label">کل درآمد (تومان)</div>
+    </div>
+    <div class="stat-sub">{{ stats.revenue.today|floatformat:0 }} امروز</div>
+  </div>
+
+  <div class="stat-card accent-purple">
+    <div class="stat-icon"><i class="fa fa-server"></i></div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.active_subs }}</div>
+      <div class="stat-label">سرویس‌های فعال</div>
+    </div>
+  </div>
+
+  <div class="stat-card {% if stats.pending_payments > 0 %}accent-orange{% else %}accent-gray{% endif %}">
+    <div class="stat-icon"><i class="fa fa-clock"></i></div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.pending_payments }}</div>
+      <div class="stat-label">پرداخت در انتظار</div>
+    </div>
+    {% if stats.pending_payments > 0 %}
+    <div class="stat-sub"><a href="{% url 'panel:admin_payments' %}?status=pending">بررسی کنید ←</a></div>
+    {% endif %}
+  </div>
+
+  <div class="stat-card accent-teal">
+    <div class="stat-icon"><i class="fa fa-box"></i></div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.products }}</div>
+      <div class="stat-label">محصولات</div>
+    </div>
+  </div>
+
+  <div class="stat-card accent-red">
+    <div class="stat-icon"><i class="fa fa-ban"></i></div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.users.banned }}</div>
+      <div class="stat-label">کاربران بن‌شده</div>
+    </div>
+  </div>
+</div>
+
+<div class="quick-actions card">
+  <h2 class="card-title">دسترسی سریع</h2>
+  <div class="quick-grid">
+    <a href="{% url 'panel:admin_payments' %}?status=pending" class="quick-btn orange">
+      <i class="fa fa-money-bill-transfer"></i>
+      <span>پرداخت‌های در انتظار</span>
+      {% if stats.pending_payments > 0 %}
+        <span class="badge">{{ stats.pending_payments }}</span>
+      {% endif %}
+    </a>
+    <a href="{% url 'panel:admin_users' %}" class="quick-btn blue">
+      <i class="fa fa-users"></i><span>مدیریت کاربران</span>
+    </a>
+    <a href="{% url 'panel:admin_products' %}" class="quick-btn purple">
+      <i class="fa fa-box"></i><span>مدیریت محصولات</span>
+    </a>
+    <a href="{% url 'panel:admin_panels' %}" class="quick-btn teal">
+      <i class="fa fa-desktop"></i><span>مدیریت پنل‌ها</span>
+    </a>
+    <a href="{% url 'panel:admin_settings' %}" class="quick-btn gray">
+      <i class="fa fa-gear"></i><span>تنظیمات ربات</span>
+    </a>
+  </div>
+</div>
+{% endblock %}

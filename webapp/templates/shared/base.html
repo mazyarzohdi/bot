@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}BananaBot Panel{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'css/main.css' %}"/>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="{% if is_admin %}role-admin{% else %}role-user{% endif %}">
+
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <span class="logo-icon">🍌</span>
+        <span class="logo-text">BananaBot</span>
+      </div>
+      <button class="sidebar-close" onclick="toggleSidebar()"><i class="fa fa-times"></i></button>
+    </div>
+
+    <div class="user-card">
+      {% if tg_user.photo_url %}
+        <img src="{{ tg_user.photo_url }}" class="user-avatar" alt="avatar">
+      {% else %}
+        <div class="user-avatar-placeholder"><i class="fa fa-user"></i></div>
+      {% endif %}
+      <div class="user-info">
+        <div class="user-name">{{ tg_user.first_name }} {{ tg_user.last_name|default:"" }}</div>
+        <div class="user-role {% if is_admin %}admin{% else %}user{% endif %}">
+          {% if is_admin %}<i class="fa fa-shield-halved"></i> ادمین{% else %}<i class="fa fa-user"></i> کاربر{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a href="{% url 'panel:dashboard' %}" class="nav-item {% block nav_dashboard %}{% endblock %}">
+        <i class="fa fa-gauge"></i> داشبورد
+      </a>
+
+      {% if not is_admin %}
+      <div class="nav-group-label">سرویس‌ها</div>
+      <a href="{% url 'panel:user_services' %}" class="nav-item {% block nav_services %}{% endblock %}">
+        <i class="fa fa-server"></i> سرویس‌های من
+      </a>
+      <a href="{% url 'panel:user_buy' %}" class="nav-item {% block nav_buy %}{% endblock %}">
+        <i class="fa fa-cart-shopping"></i> خرید سرویس
+      </a>
+      <a href="{% url 'panel:user_wallet' %}" class="nav-item {% block nav_wallet %}{% endblock %}">
+        <i class="fa fa-wallet"></i> کیف پول
+      </a>
+      {% if is_reseller %}
+      <a href="{% url 'panel:reseller_panel' %}" class="nav-item {% block nav_reseller %}{% endblock %}">
+        <i class="fa fa-people-arrows"></i> پنل نمایندگی
+      </a>
+      {% endif %}
+      {% endif %}
+
+      {% if is_admin %}
+      <div class="nav-group-label">مدیریت</div>
+      <a href="{% url 'panel:admin_users' %}" class="nav-item {% block nav_users %}{% endblock %}">
+        <i class="fa fa-users"></i> کاربران
+      </a>
+      <a href="{% url 'panel:admin_payments' %}" class="nav-item {% block nav_payments %}{% endblock %}">
+        <i class="fa fa-money-bill-transfer"></i> پرداخت‌ها
+      </a>
+      <a href="{% url 'panel:admin_products' %}" class="nav-item {% block nav_products %}{% endblock %}">
+        <i class="fa fa-box"></i> محصولات
+      </a>
+      <a href="{% url 'panel:admin_panels' %}" class="nav-item {% block nav_panels %}{% endblock %}">
+        <i class="fa fa-desktop"></i> پنل‌ها
+      </a>
+      <a href="{% url 'panel:admin_reseller_plans' %}" class="nav-item {% block nav_reseller_plans %}{% endblock %}">
+        <i class="fa fa-people-arrows"></i> پلن‌های نمایندگی
+      </a>
+      <a href="{% url 'panel:admin_resellers' %}" class="nav-item {% block nav_admin_resellers %}{% endblock %}">
+        <i class="fa fa-user-tie"></i> نمایندگان
+      </a>
+      <div class="nav-group-label">تنظیمات</div>
+      <a href="{% url 'panel:admin_settings' %}" class="nav-item {% block nav_settings %}{% endblock %}">
+        <i class="fa fa-gear"></i> تنظیمات ربات
+      </a>
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="{% url 'panel:logout' %}" class="nav-item logout">
+        <i class="fa fa-right-from-bracket"></i> خروج
+      </a>
+    </div>
+  </aside>
+
+  <!-- Overlay -->
+  <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+  <!-- Main content -->
+  <main class="main">
+    <header class="topbar">
+      <button class="menu-btn" onclick="toggleSidebar()">
+        <i class="fa fa-bars"></i>
+      </button>
+      <h1 class="page-title">{% block page_title %}داشبورد{% endblock %}</h1>
+      <div class="topbar-right">
+        {% if db_user %}
+          <span class="balance-badge"><i class="fa fa-wallet"></i> {{ db_user.balance|default:0 }} تومان</span>
+        {% endif %}
+      </div>
+    </header>
+
+    {% if messages %}
+    <div class="messages">
+      {% for msg in messages %}
+        <div class="alert alert-{{ msg.tags }}">
+          {{ msg }}
+          <button onclick="this.parentElement.remove()">×</button>
+        </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="content">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+
+<script src="{% static 'js/main.js' %}"></script>
+<script>
+  (function () {
+    var tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); }
+  })();
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,18 @@
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+    <a href="?page={{ page|add:'-1' }}{% if search %}&q={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" class="page-btn">
+      <i class="fa fa-chevron-right"></i>
+    </a>
+  {% endif %}
+
+  {% for i in total_pages|rjust:total_pages %}{% endfor %}
+  <span class="page-info">صفحه {{ page }} از {{ total_pages }}</span>
+
+  {% if page < total_pages %}
+    <a href="?page={{ page|add:'1' }}{% if search %}&q={{ search }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" class="page-btn">
+      <i class="fa fa-chevron-left"></i>
+    </a>
+  {% endif %}
+</div>
+{% endif %}
