@@ -88,6 +88,11 @@ def get_client_links(base_url: str, api_token: str, email: str, timeout: float =
     return []
 
 
+def get_client_traffic(base_url: str, api_token: str, email: str, timeout: float = 15) -> dict:
+    result = _request(base_url, api_token, "GET", f"/panel/api/clients/traffic/{email}", timeout=timeout)
+    return result.get("obj") or {}
+
+
 def compute_expiry_ms(duration_days: int, on_hold: bool = False) -> int:
     if duration_days <= 0:
         return 0

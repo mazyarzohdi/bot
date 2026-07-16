@@ -658,11 +658,11 @@ def _reseller_locked(reseller: dict) -> bool:
 
 
 def _reseller_quota_available(reseller: dict, exclude_config_id: int | None = None) -> float:
-    configs = bot_db.get_reseller_configs(reseller["id"])
-    used = sum(
-        c["volume_gb"] for c in configs
-        if c["status"] != "deleted" and c["id"] != exclude_config_id
-    )
+    used = bot_db.get_reseller_used_gb(reseller["id"])
+    if exclude_config_id:
+        cfg = bot_db.get_reseller_config(exclude_config_id)
+        if cfg and cfg["status"] != "deleted":
+            used -= cfg["volume_gb"]
     return max(0.0, reseller["quota_gb"] - used)
 
 
@@ -792,12 +792,35 @@ def reseller_panel(request: HttpRequest):
                 )
 
             elif action == "delete_config":
+                # مهم: قبل از حذف، حجم واقعیِ مصرف‌شده‌ی این کانفیگ را از پنل
+                # می‌گیریم و برای همیشه ثبت می‌کنیم؛ فقط حجمِ استفاده‌نشده به
+                # سقف نماینده برمی‌گردد. در غیر این صورت نماینده می‌توانست با
+                # ساخت و حذف مکرر کانفیگ، حجم مصرف‌شده‌ی واقعی را دور بزند.
+                try:
+                    traffic = xui_client.get_client_traffic(panel["url"], panel["api_token"], config["email"])
+                    up = traffic.get("up") or 0
+                    down = traffic.get("down") or 0
+                    used_gb = (up + down) / (1024 ** 3)
+                except xui_client.XUIError:
+                    # اگر نشد ترافیک واقعی را بگیریم، برای جلوگیری از سوءاستفاده
+                    # کل حجمِ تخصیص‌یافته را «مصرف‌شده» در نظر می‌گیریم (چیزی
+                    # به سقف نماینده برنمی‌گردد)، نه صفر.
+                    used_gb = config["volume_gb"]
+
+                used_gb = max(0.0, min(used_gb, config["volume_gb"]))
+                freed_gb = config["volume_gb"] - used_gb
+
                 try:
                     xui_client.delete_client(panel["url"], panel["api_token"], config["email"])
                 except Exception:
                     pass
-                bot_db.update_reseller_config(config_id, status="deleted")
-                messages.success(request, "✅ کانفیگ حذف شد.")
+
+                bot_db.update_reseller_config(config_id, status="deleted", consumed_gb=round(used_gb, 3))
+                messages.success(
+                    request,
+                    f"✅ کانفیگ حذف شد. حجم مصرف‌شده «{used_gb:.2f} GB» برای همیشه از سقف نمایندگی شما کسر ماند "
+                    f"و فقط حجم استفاده‌نشده «{freed_gb:.2f} GB» به حساب شما بازگشت.",
+                )
 
             elif action == "update_config":
                 try:
@@ -842,7 +865,7 @@ def reseller_panel(request: HttpRequest):
         return redirect("panel:reseller_panel")
 
     configs = bot_db.get_reseller_configs(reseller["id"])
-    used_gb = sum(c["volume_gb"] for c in configs)
+    used_gb = bot_db.get_reseller_used_gb(reseller["id"])
     remaining_gb = max(0.0, reseller["quota_gb"] - used_gb)
 
     for c in configs:
@@ -958,7 +981,7 @@ def admin_reseller_detail(request: HttpRequest, reseller_id: int):
         return redirect("panel:admin_reseller_detail", reseller_id=reseller_id)
 
     configs = bot_db.get_reseller_configs(reseller_id)
-    used_gb = sum(c["volume_gb"] for c in configs)
+    used_gb = bot_db.get_reseller_used_gb(reseller_id)
     return render(request, "admin/reseller_detail.html", {
         "reseller": reseller, "configs": configs, "used_gb": used_gb,
         "remaining_gb": max(0.0, reseller["quota_gb"] - used_gb),

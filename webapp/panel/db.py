@@ -342,8 +342,8 @@ def set_reseller_status(reseller_id: int, status: str):
 def get_reseller_used_gb(reseller_id: int) -> float:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT COALESCE(SUM(volume_gb), 0) as used FROM reseller_configs "
-            "WHERE reseller_id = ? AND status != 'deleted'",
+            "SELECT COALESCE(SUM(CASE WHEN status = 'deleted' THEN consumed_gb ELSE volume_gb END), 0) as used "
+            "FROM reseller_configs WHERE reseller_id = ?",
             (reseller_id,),
         ).fetchone()
     return row["used"] if row else 0.0
@@ -398,7 +398,7 @@ def add_reseller_config(**data) -> int:
 
 
 def update_reseller_config(config_id: int, **fields):
-    allowed = {"label", "volume_gb", "expiry_time", "config_link", "config_links", "sub_link", "status", "sub_id"}
+    allowed = {"label", "volume_gb", "expiry_time", "config_link", "config_links", "sub_link", "status", "sub_id", "consumed_gb"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return

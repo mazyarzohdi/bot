@@ -726,8 +726,8 @@ class Database:
 
     async def get_reseller_used_gb(self, reseller_id: int) -> float:
         row = await self._fetchone(
-            "SELECT COALESCE(SUM(volume_gb), 0) as used FROM reseller_configs "
-            "WHERE reseller_id = ? AND status != 'deleted'",
+            "SELECT COALESCE(SUM(CASE WHEN status = 'deleted' THEN consumed_gb ELSE volume_gb END), 0) as used "
+            "FROM reseller_configs WHERE reseller_id = ?",
             (reseller_id,),
         )
         return row["used"] if row else 0.0
@@ -781,7 +781,7 @@ class Database:
     async def update_reseller_config(self, config_id: int, **fields):
         allowed = {
             "label", "volume_gb", "expiry_time", "config_link",
-            "config_links", "sub_link", "status", "sub_id",
+            "config_links", "sub_link", "status", "sub_id", "consumed_gb",
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:

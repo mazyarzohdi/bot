@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS reseller_configs (
     config_links TEXT DEFAULT '[]',
     sub_link TEXT,
     status TEXT NOT NULL DEFAULT 'active',
+    consumed_gb REAL NOT NULL DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (reseller_id) REFERENCES resellers(id)
 );

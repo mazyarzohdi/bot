@@ -143,7 +143,7 @@
             <button type="submit" class="btn btn-sm btn-success"><i class="fa fa-play"></i> فعال‌سازی</button>
           {% endif %}
         </form>
-        <form method="post" onsubmit="return confirm('حذف کامل این کانفیگ؟ این عملیات قابل بازگشت نیست.')">
+        <form method="post" onsubmit="return confirm('حذف کامل این کانفیگ؟ فقط حجمِ استفاده‌نشده به حساب شما برمی‌گردد و حجم مصرف‌شده برای همیشه از سقف نمایندگی‌تان کسر می‌ماند.')">
           {% csrf_token %}
           <input type="hidden" name="action" value="delete_config"/>
           <input type="hidden" name="config_id" value="{{ c.id }}"/>
