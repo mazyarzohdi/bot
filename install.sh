@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  BananaBot — Automated Installation & Configuration Script
-#  GitHub: https://github.com/mazyarzohdi/BananaBot
+#  bot — Automated Installation & Configuration Script
+#  GitHub: https://github.com/mazyarzohdi/bot
 # =============================================================================
 
 set -euo pipefail
@@ -32,16 +32,16 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 # ── Variables ────────────────────────────────────────────────────────────────
-REPO_URL="https://github.com/mazyarzohdi/BananaBot"
-INSTALL_DIR="/opt/BananaBot"
+REPO_URL="https://github.com/mazyarzohdi/bot"
+INSTALL_DIR="/opt/bot"
 WEBAPP_DIR="$INSTALL_DIR/webapp"
-SERVICE_NAME="bananabot"
-WEBHOOK_SERVICE="bananabot-webhook"
-WEBAPP_SERVICE="bananabot-web"
+SERVICE_NAME="bot"
+WEBHOOK_SERVICE="bot-webhook"
+WEBAPP_SERVICE="bot-web"
 PYTHON_MIN="3.11"
 VENV_DIR="$INSTALL_DIR/.venv"
 WEBAPP_VENV="$WEBAPP_DIR/.venv"
-LOG_FILE="/var/log/bananabot-install.log"
+LOG_FILE="/var/log/bot-install.log"
 
 # ── Config vars (populated by collect_config) ────────────────────────────────
 BOT_TOKEN=""; ADMIN_IDS=""; CARD_NUMBER=""; CARD_HOLDER=""
@@ -87,7 +87,7 @@ cat << 'EOF'
   ██████╔╝██║  ██║██║ ╚████║██║  ██║██║ ╚████║██║  ██║██████╔╝╚██████╔╝   ██║
   ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝
 
-  Automated Setup — github.com/mazyarzohdi/BananaBot
+  Automated Setup — github.com/mazyarzohdi/bot
 EOF
 echo ""
 }
@@ -344,7 +344,7 @@ create_systemd_service() {
     log "Creating bot systemd service..."
     cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
 [Unit]
-Description=BananaBot — Telegram Bot
+Description=bot — Telegram Bot
 After=network.target
 Wants=network-online.target
 
@@ -371,7 +371,7 @@ create_webhook_service() {
     log "Creating auto-payment webhook systemd service..."
     cat > "/etc/systemd/system/${WEBHOOK_SERVICE}.service" << EOF
 [Unit]
-Description=BananaBot — Auto-Payment Webhook (bank SMS)
+Description=bot — Auto-Payment Webhook (bank SMS)
 After=network.target
 Wants=network-online.target
 
@@ -456,7 +456,7 @@ print_summary() {
             echo -e "  ${YELLOW}To open the panel as a Telegram Mini App (button inside the bot):${NC}"
             echo -e "  ${YELLOW}1. Open @BotFather → /mybots → your bot → Bot Settings → Menu Button /${NC}"
             echo -e "  ${YELLOW}   Configure Menu Button, and set it to: ${CYAN}${PROTO}://${WEB_DOMAIN}:${WEB_PORT}${WEB_PATH}/${NC}"
-            echo -e "  ${YELLOW}   (BananaBot also sets this automatically on every bot restart.)${NC}"
+            echo -e "  ${YELLOW}   (bot also sets this automatically on every bot restart.)${NC}"
             echo -e "  ${YELLOW}2. For the browser \"Log in with Telegram\" button to also work,${NC}"
             echo -e "  ${YELLOW}   set the same domain via @BotFather → /setdomain.${NC}"
         else
