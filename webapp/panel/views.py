@@ -684,6 +684,34 @@ def _format_ts(ts: int) -> str:
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
 
 
+def _annotate_config_usage(reseller: dict, configs: list[dict]) -> None:
+    """برای هر کانفیگِ فعال/غیرفعال‌موقت، حجم واقعی مصرف‌شده و باقی‌مانده را
+    از پنل X-UI می‌گیرد و روی دیکشنری کانفیگ می‌گذارد تا نماینده ببیند هر
+    مشتری چقدر مصرف کرده و چقدر برایش مانده."""
+    panel_url = reseller.get("panel_url")
+    api_token = reseller.get("api_token")
+    for c in configs:
+        if c["status"] == "deleted":
+            continue
+        try:
+            traffic = xui_client.get_client_traffic(panel_url, api_token, c["email"])
+            up = traffic.get("up") or 0
+            down = traffic.get("down") or 0
+            c["usage_used_gb"] = (up + down) / (1024 ** 3)
+        except xui_client.XUIError:
+            c["usage_used_gb"] = None
+
+        if c["usage_used_gb"] is None:
+            c["usage_remaining_gb"] = None
+            c["usage_percent"] = None
+        elif c["volume_gb"] > 0:
+            c["usage_remaining_gb"] = max(0.0, c["volume_gb"] - c["usage_used_gb"])
+            c["usage_percent"] = min(100, round((c["usage_used_gb"] / c["volume_gb"]) * 100))
+        else:
+            c["usage_remaining_gb"] = None  # حجم نامحدود
+            c["usage_percent"] = 0
+
+
 @login_required
 def reseller_panel(request: HttpRequest):
     tg_user = get_current_user(request)
@@ -778,10 +806,12 @@ def reseller_panel(request: HttpRequest):
             elif action == "toggle_config":
                 new_status = "disabled" if config["status"] == "active" else "active"
                 try:
-                    client_data = xui_client.get_client(panel["url"], panel["api_token"], config["email"])
-                    if client_data:
-                        client_data["enable"] = (new_status == "active")
-                        xui_client.update_client(panel["url"], panel["api_token"], config["email"], client_data)
+                    client_data = xui_client.get_client(panel["url"], panel["api_token"], config["email"]) or {}
+                    client_data.update({
+                        "email": config["email"],
+                        "enable": (new_status == "active"),
+                    })
+                    xui_client.update_client(panel["url"], panel["api_token"], config["email"], client_data)
                 except xui_client.XUIError as e:
                     messages.error(request, f"خطا در تغییر وضعیت روی پنل: {e}")
                     return redirect("panel:reseller_panel")
@@ -880,6 +910,8 @@ def reseller_panel(request: HttpRequest):
                 "منقضی‌شده" if secs < time.time()
                 else datetime.fromtimestamp(secs).strftime("%Y-%m-%d %H:%M")
             )
+
+    _annotate_config_usage(reseller, configs)
 
     return render(request, "user/reseller.html", {
         "db_user": db_user, "tg_user": tg_user, "is_admin": is_admin(request),
@@ -982,6 +1014,7 @@ def admin_reseller_detail(request: HttpRequest, reseller_id: int):
 
     configs = bot_db.get_reseller_configs(reseller_id)
     used_gb = bot_db.get_reseller_used_gb(reseller_id)
+    _annotate_config_usage(reseller, configs)
     return render(request, "admin/reseller_detail.html", {
         "reseller": reseller, "configs": configs, "used_gb": used_gb,
         "remaining_gb": max(0.0, reseller["quota_gb"] - used_gb),

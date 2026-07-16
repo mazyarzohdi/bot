@@ -34,13 +34,15 @@
   <h2 class="card-title"><i class="fa fa-server"></i> کانفیگ‌های این نماینده ({{ configs|length }})</h2>
   {% if configs %}
   <table class="table">
-    <thead><tr><th>نام</th><th>ایمیل</th><th>حجم</th><th>وضعیت</th></tr></thead>
+    <thead><tr><th>نام</th><th>ایمیل</th><th>حجم</th><th>مصرف‌شده</th><th>باقیمانده</th><th>وضعیت</th></tr></thead>
     <tbody>
       {% for c in configs %}
       <tr>
         <td>{{ c.label|default:"—" }}</td>
         <td><code>{{ c.email }}</code></td>
         <td>{{ c.volume_gb }} GB</td>
+        <td>{% if c.usage_used_gb is not None %}{{ c.usage_used_gb|floatformat:2 }} GB{% else %}—{% endif %}</td>
+        <td>{% if c.usage_remaining_gb is not None %}{{ c.usage_remaining_gb|floatformat:2 }} GB{% else %}—{% endif %}</td>
         <td>
           {% if c.status == "active" %}<span class="badge-green">فعال</span>
           {% elif c.status == "disabled" %}<span class="badge-orange">غیرفعال موقت</span>

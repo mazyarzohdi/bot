@@ -100,6 +100,20 @@
       <div class="service-detail"><i class="fa fa-envelope"></i> <code>{{ c.email }}</code></div>
       <div class="service-detail"><i class="fa fa-calendar-check"></i> انقضا: {{ c.expiry_display }}</div>
 
+      {% if c.usage_used_gb is not None %}
+        <div class="service-detail">
+          <i class="fa fa-chart-pie"></i>
+          مصرف‌شده: {{ c.usage_used_gb|floatformat:2 }} GB از {{ c.volume_gb }} GB
+          {% if c.usage_remaining_gb is not None %}— باقیمانده: {{ c.usage_remaining_gb|floatformat:2 }} GB{% endif %}
+        </div>
+        <div class="quota-bar-track">
+          <div class="quota-bar-fill {% if c.usage_percent >= 100 %}danger{% elif c.usage_percent >= 80 %}warn{% endif %}"
+               style="width: {{ c.usage_percent }}%"></div>
+        </div>
+      {% else %}
+        <div class="service-detail"><i class="fa fa-triangle-exclamation"></i> دریافت میزان مصرف از پنل ممکن نشد.</div>
+      {% endif %}
+
       {% if c.sub_link %}
         <a href="{{ c.sub_link }}" class="btn btn-sm btn-primary mt-2" target="_blank"><i class="fa fa-link"></i> لینک سابسکریپشن</a>
       {% endif %}
