@@ -125,6 +125,12 @@ def get_product(product_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def get_reseller_plan(plan_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM reseller_plans WHERE id = ?", (plan_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def get_user_balance(user_id: int) -> int:
     with get_conn() as conn:
         row = conn.execute("SELECT balance FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -150,12 +156,6 @@ def send_telegram_message(chat_id: int, text: str, reply_markup: dict | None = N
         logger.exception("Failed to notify user %s", chat_id)
 
 
-def get_reseller_plan(plan_id: int) -> dict | None:
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM reseller_plans WHERE id = ?", (plan_id,)).fetchone()
-    return dict(row) if row else None
-
-
 def notify_payment_approved(payment: dict):
     telegram_id = payment.get("telegram_id")
     if not telegram_id:
@@ -167,19 +167,19 @@ def notify_payment_approved(payment: dict):
         reply_markup = {"inline_keyboard": [[
             {"text": "🔁 تکمیل تمدید سرویس", "callback_data": f"svc_renew_ok:{payment['renew_sub_id']}"},
         ]]}
+    elif payment.get("reseller_plan_id"):
+        plan = get_reseller_plan(payment["reseller_plan_id"])
+        if plan:
+            text += f"\n\nحالا می‌توانید خرید/تمدید نمایندگی «{plan['name']}» را تکمیل کنید 👇"
+            reply_markup = {"inline_keyboard": [[
+                {"text": "🤝 تکمیل خرید/تمدید نمایندگی", "callback_data": f"res_confirm:{payment['reseller_plan_id']}"},
+            ]]}
     elif payment.get("product_id"):
         product = get_product(payment["product_id"])
         if product:
             text += f"\n\nحالا می‌توانید خرید «{product['name']}» را تکمیل کنید 👇"
             reply_markup = {"inline_keyboard": [[
                 {"text": "🛒 تکمیل خرید", "callback_data": f"confirm_buy:{payment['product_id']}"},
-            ]]}
-    elif payment.get("reseller_plan_id"):
-        plan = get_reseller_plan(payment["reseller_plan_id"])
-        if plan:
-            text += f"\n\nحالا می‌توانید خرید پلن نمایندگی «{plan['name']}» را تکمیل کنید 👇"
-            reply_markup = {"inline_keyboard": [[
-                {"text": "🤝 تکمیل خرید نمایندگی", "callback_data": f"resplan_confirm:{payment['reseller_plan_id']}"},
             ]]}
     send_telegram_message(int(telegram_id), text, reply_markup)
 
